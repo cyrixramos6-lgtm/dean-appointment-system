@@ -1,1 +1,1 @@
-# dean-appointment-system
+# Department Chair appointment
