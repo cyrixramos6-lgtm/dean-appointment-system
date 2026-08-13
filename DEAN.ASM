@@ -402,9 +402,6 @@ SearchNotEqual:
     ret
 StrSearchAtStart ENDP
 
-; ==================================================
-; MAIN ENTRY POINT
-; ==================================================
 main PROC
     INVOKE GetModuleHandleA, 0
     mov hInstance, eax
