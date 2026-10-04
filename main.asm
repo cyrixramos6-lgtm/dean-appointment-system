@@ -31,9 +31,6 @@ lstrcpynA PROTO STDCALL :DWORD,:DWORD,:DWORD
 lstrcmpA PROTO STDCALL :DWORD,:DWORD
 SetWindowLongA PROTO STDCALL :DWORD,:DWORD,:DWORD
 CallWindowProcA PROTO STDCALL :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
-GetLocalTime PROTO STDCALL :DWORD
-SetTimer PROTO STDCALL :DWORD,:DWORD,:DWORD,:DWORD
-KillTimer PROTO STDCALL :DWORD,:DWORD
 SetTextColor PROTO STDCALL :DWORD,:DWORD
 SetBkMode PROTO STDCALL :DWORD,:DWORD
 SetBkColor PROTO STDCALL :DWORD,:DWORD
@@ -71,7 +68,7 @@ WM_SETFONT equ 0030h
 WM_CTLCOLORSTATIC equ 0138h
 WM_CHAR equ 0102h
 WM_KEYDOWN equ 0100h
-WM_TIMER equ 0113h
+
 LB_ADDSTRING equ 0180h
 LB_RESETCONTENT equ 0184h
 LB_GETCURSEL equ 0188h
@@ -81,6 +78,7 @@ EM_SETSEL equ 0B1h
 MB_OK equ 0
 MB_ICONINFORMATION equ 040h
 MB_ICONWARNING equ 030h
+
 CS_HREDRAW equ 0002h
 CS_VREDRAW equ 0001h
 COLOR_WINDOW equ 5
@@ -91,7 +89,6 @@ TRANSPARENT equ 1
 OPAQUE equ 2
 NULL_BRUSH equ 5
 COLOR_MAROON equ 00000080h
-ID_CLOCK_TIMER equ 100
 
 MAX_RECORDS equ 10
 NAME_LEN equ 40
@@ -148,17 +145,6 @@ MSG STRUCT
     ptY dd ?
 MSG ENDS
 
-SYSTEMTIME STRUCT
-    wYear dw ?
-    wMonth dw ?
-    wDayOfWeek dw ?
-    wDay dw ?
-    wHour dw ?
-    wMinute dw ?
-    wSecond dw ?
-    wMilliseconds dw ?
-SYSTEMTIME ENDS
-
 WndProc PROTO :DWORD,:DWORD,:DWORD,:DWORD
 RefreshList PROTO
 BookAppointment PROTO
@@ -179,8 +165,6 @@ TimeEditProc PROTO :DWORD,:DWORD,:DWORD,:DWORD
 ValidateDate PROTO :DWORD
 ValidateTime PROTO :DWORD
 TimeToMinutes PROTO :DWORD,:DWORD,:DWORD
-PadNumber2 PROTO :DWORD,:DWORD
-UpdateClock PROTO
 ShowStudentFCFS PROTO
 SortFCFS PROTO
 GetDateValue PROTO :DWORD
@@ -190,7 +174,6 @@ IsRecordLess PROTO :DWORD,:DWORD
 .data
 className db "DeanAppointmentSystem",0
 windowTitle db "Dean Appointment System - Student / Dean Access",0
-
 clsStatic db "STATIC",0
 clsEdit db "EDIT",0
 clsButton db "BUTTON",0
@@ -199,6 +182,7 @@ clsListBox db "LISTBOX",0
 txtHeader db "DEAN APPOINTMENT SYSTEM",0
 txtSubHeader db "STUDENT APPOINTMENT REQUEST / DEAN MANAGEMENT",0
 fontFace db "Segoe UI",0
+
 txtStudent db "STUDENT INFORMATION",0
 txtDean db "DEAN ACCESS",0
 txtQueue db "APPOINTMENT QUEUE",0
@@ -261,9 +245,11 @@ prefixDate db " | Date: ",0
 prefixTime db " | Time: ",0
 prefixPurpose db " | Purpose: ",0
 prefixStatus db " | Status: ",0
+
 statusWaiting db "WAITING",0
 statusAccepted db "ACCEPTED",0
 statusDoneText db "DONE",0
+
 detailID db "Appointment ID: ",0
 detailName db "Student Name: ",0
 detailDate db "Appointment Date: ",0
@@ -271,14 +257,8 @@ detailTime db "Appointment Time: ",0
 detailPurpose db "Purpose: ",0
 detailStatus db "Status: ",0
 detailQueue db "FCFS Position: ",0
-newline db 13,10,0
 
-clockPrefix db "Current Date and Time: ",0
-sepSlash db "/",0
-sepColon db ":",0
-sepSpace db "  ",0
-clockBuf db 64 dup(0)
-clockNumBuf db 8 dup(0)
+newline db 13,10,0
 
 inputName db 64 dup(0)
 inputDate db 32 dup(0)
@@ -290,33 +270,8 @@ numBuf db 16 dup(0)
 listBuf db 512 dup(0)
 detailsBuf db 1024 dup(0)
 
-; Masked-input template for the Date field: '/' positions are
-; literal and can never be typed over, deleted, or shifted; the
-; remaining positions are digit slots whose placeholder character
-; is restored on Backspace/Delete.
 dateTemplate db "MM/DD/YYYY",0
-
-; Masked-input template for the Time field: a START/END range
-; "00:00 AM - 00:00 AM" (19 chars). Two copies of the original
-; single-time mask joined by a fixed " - " literal:
-;   0,1     = start hour tens/ones digit
-;   2       = ':' (literal)
-;   3,4     = start minute tens/ones digit
-;   5       = ' ' (literal)
-;   6       = start AM/PM letter (A or P)
-;   7       = 'M' (literal)
-;   8,9,10  = ' ','-',' ' (literal)
-;   11,12   = end hour tens/ones digit
-;   13      = ':' (literal)
-;   14,15   = end minute tens/ones digit
-;   16      = ' ' (literal)
-;   17      = end AM/PM letter (A or P)
-;   18      = 'M' (literal)
-; All literal positions can never be typed over, deleted, or
-; shifted; the digit/letter slots reset to their placeholder
-; character on Backspace/Delete.
 timeTemplate db "00:00 AM - 00:00 AM",0
-
 dateEditBuf db 16 dup(0)
 timeEditBuf db 24 dup(0)
 oldDateEditProc dd 0
@@ -328,36 +283,31 @@ times db MAX_RECORDS*(TIME_LEN+1) dup(0)
 purposes db MAX_RECORDS*(PURPOSE_LEN+1) dup(0)
 ids db MAX_RECORDS dup(0)
 statuses db MAX_RECORDS dup(0)
-
-; sortIndex holds record-array slot numbers (0..recCount-1) in
-; ascending order of appointment date, then time, then ID -
-; used only for the student-facing "CURRENT FCFS APPOINTMENT
-; LIST" view so it never disturbs the Dean's raw queue order.
 sortIndex db MAX_RECORDS dup(0)
 
 recCount dd 0
 nextID dd 1
-isDeanMode dd FALSE
 
-; TRUE while the shared appointment display area is showing the
-; sorted FCFS list (as opposed to the Dean's raw queue order).
-; Used so "View Details" maps the selected list row back to the
-; correct record no matter which view is currently displayed.
+isDeanMode dd FALSE
 isFcfsViewActive dd FALSE
 
 hInstance dd 0
 hMainWnd dd 0
+
 hEditName dd 0
 hEditDate dd 0
 hEditTime dd 0
 hEditPurpose dd 0
 hEditID dd 0
 hEditPassword dd 0
+
 hList dd 0
 hDetailsBox dd 0
 hStatus dd 0
+
 hFont dd 0
 hFontBold dd 0
+
 hBtnLogout dd 0
 hBtnView dd 0
 hBtnDetails dd 0
@@ -369,7 +319,6 @@ hBtnCheck dd 0
 hBtnStudentFCFS dd 0
 
 hTitleStatic dd 0
-hClockDisplay dd 0
 hHdrStudent dd 0
 hHdrDean dd 0
 hHdrSelected dd 0
@@ -379,6 +328,1507 @@ wc WNDCLASS <>
 msg MSG <>
 
 .code
+
+BookAppointment PROC
+    mov eax,recCount
+    cmp eax,MAX_RECORDS
+    jb queue_has_room
+    invoke MessageBoxA,hMainWnd,ADDR msgFull,ADDR txtHeader,MB_OK or MB_ICONWARNING
+    ret
+
+queue_has_room:
+    invoke GetWindowTextA,hEditName,ADDR inputName,64
+    invoke GetWindowTextA,hEditDate,ADDR inputDate,32
+    invoke GetWindowTextA,hEditTime,ADDR inputTime,32
+    invoke GetWindowTextA,hEditPurpose,ADDR inputPurpose,128
+
+    invoke lstrlenA,ADDR inputName
+    cmp eax,0
+    je reject_incomplete
+    invoke lstrlenA,ADDR inputDate
+    cmp eax,0
+    je reject_incomplete
+    invoke lstrlenA,ADDR inputTime
+    cmp eax,0
+    je reject_incomplete
+    invoke lstrlenA,ADDR inputPurpose
+    cmp eax,0
+    je reject_incomplete
+
+    invoke ValidateDate, ADDR inputDate
+    cmp eax,0
+    je reject_bad_date
+
+    invoke ValidateTime, ADDR inputTime
+    cmp eax,1
+    je time_is_valid
+    cmp eax,2
+    je reject_bad_time_range
+    jmp reject_bad_time
+
+time_is_valid:
+    mov eax,recCount
+    mov ebx,NAME_LEN+1
+    mul ebx
+    mov edi,OFFSET names
+    add edi,eax
+    invoke lstrcpynA,edi,ADDR inputName,NAME_LEN+1
+
+    mov eax,recCount
+    mov ebx,DATE_LEN+1
+    mul ebx
+    mov edi,OFFSET dates
+    add edi,eax
+    invoke lstrcpynA,edi,ADDR inputDate,DATE_LEN+1
+
+    mov eax,recCount
+    mov ebx,TIME_LEN+1
+    mul ebx
+    mov edi,OFFSET times
+    add edi,eax
+    invoke lstrcpynA,edi,ADDR inputTime,TIME_LEN+1
+
+    mov eax,recCount
+    mov ebx,PURPOSE_LEN+1
+    mul ebx
+    mov edi,OFFSET purposes
+    add edi,eax
+    invoke lstrcpynA,edi,ADDR inputPurpose,PURPOSE_LEN+1
+
+    mov eax,recCount
+    inc eax
+    mov [ids+eax-1],al
+    mov byte ptr [statuses+eax-1],0
+    inc recCount
+
+    invoke SetWindowTextA,hEditName,NULL
+    invoke SetWindowTextA,hEditDate,ADDR dateTemplate
+    invoke SetWindowTextA,hEditTime,ADDR timeTemplate
+    invoke SetWindowTextA,hEditPurpose,NULL
+
+    invoke SetWindowTextA,hStatus,ADDR statusStudent
+    invoke MessageBoxA,hMainWnd,ADDR msgBooked,ADDR txtBook,MB_OK or MB_ICONINFORMATION
+    ret
+
+reject_bad_date:
+    invoke MessageBoxA,hMainWnd,ADDR msgInvalidDate,ADDR txtBook,MB_OK or MB_ICONWARNING
+    ret
+reject_bad_time:
+    invoke MessageBoxA,hMainWnd,ADDR msgInvalidTime,ADDR txtBook,MB_OK or MB_ICONWARNING
+    ret
+reject_bad_time_range:
+    invoke MessageBoxA,hMainWnd,ADDR msgInvalidTimeRange,ADDR txtBook,MB_OK or MB_ICONWARNING
+    ret
+reject_incomplete:
+    invoke MessageBoxA,hMainWnd,ADDR msgInvalid,ADDR txtBook,MB_OK or MB_ICONWARNING
+    ret
+BookAppointment ENDP
+
+
+AcceptAppointment PROC
+    LOCAL currentIndex:DWORD
+    LOCAL remaining:DWORD
+    LOCAL wantedID:DWORD
+
+    invoke GetWindowTextA,hEditID,ADDR inputID,16
+    call ParseID
+    cmp eax,0
+    je id_not_found
+    mov wantedID,eax
+
+    mov currentIndex,0
+    mov eax,recCount
+    mov remaining,eax
+
+find_by_id:
+    cmp remaining,0
+    je id_not_found
+    mov eax,currentIndex
+    movzx eax,byte ptr [ids+eax]
+    cmp eax,wantedID
+    je record_found
+    mov eax,currentIndex
+    inc eax
+    mov currentIndex,eax
+    mov eax,remaining
+    dec eax
+    mov remaining,eax
+    jmp find_by_id
+
+record_found:
+    mov eax,currentIndex
+    movzx eax,byte ptr [statuses+eax]
+    cmp eax,0
+    jne already_accepted
+
+    mov eax,currentIndex
+    mov byte ptr [statuses+eax],1
+    call RefreshList
+    invoke ShowRecord,currentIndex
+    invoke MessageBoxA,hMainWnd,ADDR msgAccepted,ADDR txtAccept,MB_OK or MB_ICONINFORMATION
+    ret
+
+already_accepted:
+    invoke MessageBoxA,hMainWnd,ADDR msgAlreadyAccepted,ADDR txtAccept,MB_OK or MB_ICONWARNING
+    ret
+
+id_not_found:
+    invoke MessageBoxA,hMainWnd,ADDR msgNotFound,ADDR txtAccept,MB_OK or MB_ICONWARNING
+    ret
+AcceptAppointment ENDP
+
+
+CancelAppointment PROC
+    LOCAL currentIndex:DWORD
+    LOCAL remaining:DWORD
+    LOCAL wantedID:DWORD
+    LOCAL sourceIndex:DWORD
+    LOCAL destinationIndex:DWORD
+
+    invoke GetWindowTextA,hEditID,ADDR inputID,16
+    call ParseID
+    cmp eax,0
+    je id_not_found
+    mov wantedID,eax
+
+    mov currentIndex,0
+    mov eax,recCount
+    mov remaining,eax
+find_by_id:
+    cmp remaining,0
+    je id_not_found
+    mov eax,currentIndex
+    movzx eax,byte ptr [ids+eax]
+    cmp eax,wantedID
+    je record_found
+    mov eax,currentIndex
+    inc eax
+    mov currentIndex,eax
+    mov eax,remaining
+    dec eax
+    mov remaining,eax
+    jmp find_by_id
+
+record_found:
+    mov eax,recCount
+    dec eax
+    cmp currentIndex,eax
+    jae skip_shift
+
+    mov eax,currentIndex
+    inc eax
+    mov sourceIndex,eax
+    mov eax,currentIndex
+    mov destinationIndex,eax
+
+shift_records:
+    mov eax,sourceIndex
+    cmp eax,recCount
+    jae skip_shift
+    invoke CopyRecord,sourceIndex,destinationIndex
+    mov eax,sourceIndex
+    inc eax
+    mov sourceIndex,eax
+    mov eax,destinationIndex
+    inc eax
+    mov destinationIndex,eax
+    jmp shift_records
+
+skip_shift:
+    dec recCount
+    mov eax,recCount
+    invoke ClearRecord,eax
+
+    invoke SetWindowTextA,hEditID,NULL
+    invoke SetWindowTextA,hDetailsBox,NULL
+    call RefreshList
+    invoke MessageBoxA,hMainWnd,ADDR msgCancelled,ADDR txtCancel,MB_OK or MB_ICONINFORMATION
+    ret
+
+id_not_found:
+    invoke MessageBoxA,hMainWnd,ADDR msgNotFound,ADDR txtCancel,MB_OK or MB_ICONWARNING
+    ret
+CancelAppointment ENDP
+
+
+MoveAppointment PROC
+    LOCAL currentIndex:DWORD
+    LOCAL remaining:DWORD
+    LOCAL wantedID:DWORD
+
+    invoke GetWindowTextA,hEditID,ADDR inputID,16
+    call ParseID
+    cmp eax,0
+    je id_not_found
+    mov wantedID,eax
+
+    mov currentIndex,0
+    mov eax,recCount
+    mov remaining,eax
+find_by_id:
+    cmp remaining,0
+    je id_not_found
+    mov eax,currentIndex
+    movzx eax,byte ptr [ids+eax]
+    cmp eax,wantedID
+    je record_found
+    mov eax,currentIndex
+    inc eax
+    mov currentIndex,eax
+    mov eax,remaining
+    dec eax
+    mov remaining,eax
+    jmp find_by_id
+
+record_found:
+    invoke GetWindowTextA,hEditDate,ADDR inputDate,32
+    invoke GetWindowTextA,hEditTime,ADDR inputTime,32
+
+    invoke lstrlenA,ADDR inputDate
+    cmp eax,0
+    je reject_incomplete
+    invoke lstrlenA,ADDR inputTime
+    cmp eax,0
+    je reject_incomplete
+
+    invoke ValidateDate, ADDR inputDate
+    cmp eax,0
+    je reject_bad_date
+
+    invoke ValidateTime, ADDR inputTime
+    cmp eax,1
+    je time_is_valid
+    cmp eax,2
+    je reject_bad_time_range
+    jmp reject_bad_time
+
+time_is_valid:
+    mov eax,currentIndex
+    mov ebx,DATE_LEN+1
+    mul ebx
+    mov edi,OFFSET dates
+    add edi,eax
+    invoke lstrcpynA,edi,ADDR inputDate,DATE_LEN+1
+
+    mov eax,currentIndex
+    mov ebx,TIME_LEN+1
+    mul ebx
+    mov edi,OFFSET times
+    add edi,eax
+    invoke lstrcpynA,edi,ADDR inputTime,TIME_LEN+1
+
+    call RefreshList
+    invoke ShowRecord,currentIndex
+    invoke MessageBoxA,hMainWnd,ADDR msgMoved,ADDR txtMove,MB_OK or MB_ICONINFORMATION
+    ret
+
+reject_bad_date:
+    invoke MessageBoxA,hMainWnd,ADDR msgInvalidDate,ADDR txtMove,MB_OK or MB_ICONWARNING
+    ret
+reject_bad_time:
+    invoke MessageBoxA,hMainWnd,ADDR msgInvalidTime,ADDR txtMove,MB_OK or MB_ICONWARNING
+    ret
+reject_bad_time_range:
+    invoke MessageBoxA,hMainWnd,ADDR msgInvalidTimeRange,ADDR txtMove,MB_OK or MB_ICONWARNING
+    ret
+reject_incomplete:
+    invoke MessageBoxA,hMainWnd,ADDR msgInvalid,ADDR txtMove,MB_OK or MB_ICONWARNING
+    ret
+id_not_found:
+    invoke MessageBoxA,hMainWnd,ADDR msgNotFound,ADDR txtMove,MB_OK or MB_ICONWARNING
+    ret
+MoveAppointment ENDP
+
+
+MarkDone PROC
+    LOCAL currentIndex:DWORD
+    LOCAL remaining:DWORD
+    LOCAL wantedID:DWORD
+    LOCAL sourceIndex:DWORD
+    LOCAL destinationIndex:DWORD
+
+    invoke GetWindowTextA,hEditID,ADDR inputID,16
+    call ParseID
+    cmp eax,0
+    je id_not_found
+    mov wantedID,eax
+
+    mov currentIndex,0
+    mov eax,recCount
+    mov remaining,eax
+find_by_id:
+    cmp remaining,0
+    je id_not_found
+    mov eax,currentIndex
+    movzx eax,byte ptr [ids+eax]
+    cmp eax,wantedID
+    je record_found
+    mov eax,currentIndex
+    inc eax
+    mov currentIndex,eax
+    mov eax,remaining
+    dec eax
+    mov remaining,eax
+    jmp find_by_id
+
+record_found:
+    mov eax,recCount
+    dec eax
+    cmp currentIndex,eax
+    jae skip_shift
+
+    mov eax,currentIndex
+    inc eax
+    mov sourceIndex,eax
+    mov eax,currentIndex
+    mov destinationIndex,eax
+
+shift_records:
+    mov eax,sourceIndex
+    cmp eax,recCount
+    jae skip_shift
+    invoke CopyRecord,sourceIndex,destinationIndex
+    mov eax,sourceIndex
+    inc eax
+    mov sourceIndex,eax
+    mov eax,destinationIndex
+    inc eax
+    mov destinationIndex,eax
+    jmp shift_records
+
+skip_shift:
+    dec recCount
+    mov eax,recCount
+    invoke ClearRecord,eax
+
+    mov currentIndex,0
+    mov eax,recCount
+    mov remaining,eax
+    mov ebx,1
+renumber_ids:
+    cmp remaining,0
+    je done_refresh
+    mov eax,currentIndex
+    mov [ids+eax],bl
+    inc ebx
+    mov eax,currentIndex
+    inc eax
+    mov currentIndex,eax
+    mov eax,remaining
+    dec eax
+    mov remaining,eax
+    jmp renumber_ids
+
+done_refresh:
+    invoke SetWindowTextA,hEditID,NULL
+    invoke SetWindowTextA,hDetailsBox,NULL
+    call RefreshList
+    invoke MessageBoxA,hMainWnd,ADDR msgDone,ADDR txtDone,MB_OK or MB_ICONINFORMATION
+    ret
+
+id_not_found:
+    invoke MessageBoxA,hMainWnd,ADDR msgDoneFail,ADDR txtDone,MB_OK or MB_ICONWARNING
+    ret
+MarkDone ENDP
+
+
+CheckMyStatus PROC
+    LOCAL currentIndex:DWORD
+    LOCAL remaining:DWORD
+    LOCAL wantedID:DWORD
+
+    invoke GetWindowTextA,hEditID,ADDR inputID,16
+    call ParseID
+    cmp eax,0
+    je id_not_found
+    mov wantedID,eax
+
+    mov currentIndex,0
+    mov eax,recCount
+    mov remaining,eax
+find_by_id:
+    cmp remaining,0
+    je id_not_found
+    mov eax,currentIndex
+    movzx eax,byte ptr [ids+eax]
+    cmp eax,wantedID
+    je record_found
+    mov eax,currentIndex
+    inc eax
+    mov currentIndex,eax
+    mov eax,remaining
+    dec eax
+    mov remaining,eax
+    jmp find_by_id
+
+record_found:
+    invoke ShowRecord,currentIndex
+    mov eax,currentIndex
+    movzx eax,byte ptr [statuses+eax]
+    cmp eax,0
+    jne report_done
+    invoke SetWindowTextA,hStatus,ADDR msgStatusFound
+    invoke MessageBoxA,hMainWnd,ADDR msgStatusWaiting,ADDR txtCheck,MB_OK or MB_ICONINFORMATION
+    ret
+
+report_done:
+    invoke SetWindowTextA,hStatus,ADDR msgStatusDone
+    invoke MessageBoxA,hMainWnd,ADDR msgStatusDone,ADDR txtCheck,MB_OK or MB_ICONINFORMATION
+    ret
+
+id_not_found:
+    invoke MessageBoxA,hMainWnd,ADDR msgStatusNotFound,ADDR txtCheck,MB_OK or MB_ICONWARNING
+    ret
+CheckMyStatus ENDP
+
+
+CopyRecord PROC sourceIndex:DWORD,destinationIndex:DWORD
+    mov eax,sourceIndex
+    mov dl,[ids+eax]
+    mov eax,destinationIndex
+    mov [ids+eax],dl
+
+    mov eax,sourceIndex
+    mov dl,[statuses+eax]
+    mov eax,destinationIndex
+    mov [statuses+eax],dl
+
+    mov eax,sourceIndex
+    mov ebx,NAME_LEN+1
+    mul ebx
+    mov esi,OFFSET names
+    add esi,eax
+    mov eax,destinationIndex
+    mov ebx,NAME_LEN+1
+    mul ebx
+    mov edi,OFFSET names
+    add edi,eax
+    invoke lstrcpynA,edi,esi,NAME_LEN+1
+
+    mov eax,sourceIndex
+    mov ebx,DATE_LEN+1
+    mul ebx
+    mov esi,OFFSET dates
+    add esi,eax
+    mov eax,destinationIndex
+    mov ebx,DATE_LEN+1
+    mul ebx
+    mov edi,OFFSET dates
+    add edi,eax
+    invoke lstrcpynA,edi,esi,DATE_LEN+1
+
+    mov eax,sourceIndex
+    mov ebx,TIME_LEN+1
+    mul ebx
+    mov esi,OFFSET times
+    add esi,eax
+    mov eax,destinationIndex
+    mov ebx,TIME_LEN+1
+    mul ebx
+    mov edi,OFFSET times
+    add edi,eax
+    invoke lstrcpynA,edi,esi,TIME_LEN+1
+
+    mov eax,sourceIndex
+    mov ebx,PURPOSE_LEN+1
+    mul ebx
+    mov esi,OFFSET purposes
+    add esi,eax
+    mov eax,destinationIndex
+    mov ebx,PURPOSE_LEN+1
+    mul ebx
+    mov edi,OFFSET purposes
+    add edi,eax
+    invoke lstrcpynA,edi,esi,PURPOSE_LEN+1
+    ret
+CopyRecord ENDP
+
+
+ClearRecord PROC index:DWORD
+    mov eax,index
+    mov byte ptr [ids+eax],0
+    mov byte ptr [statuses+eax],0
+
+    mov eax,index
+    mov ebx,NAME_LEN+1
+    mul ebx
+    mov edi,OFFSET names
+    add edi,eax
+    mov ecx,NAME_LEN+1
+    xor eax,eax
+    rep stosb
+
+    mov eax,index
+    mov ebx,DATE_LEN+1
+    mul ebx
+    mov edi,OFFSET dates
+    add edi,eax
+    mov ecx,DATE_LEN+1
+    xor eax,eax
+    rep stosb
+
+    mov eax,index
+    mov ebx,TIME_LEN+1
+    mul ebx
+    mov edi,OFFSET times
+    add edi,eax
+    mov ecx,TIME_LEN+1
+    xor eax,eax
+    rep stosb
+
+    mov eax,index
+    mov ebx,PURPOSE_LEN+1
+    mul ebx
+    mov edi,OFFSET purposes
+    add edi,eax
+    mov ecx,PURPOSE_LEN+1
+    xor eax,eax
+    rep stosb
+    ret
+ClearRecord ENDP
+
+
+ParseID PROC
+    xor eax,eax
+    mov esi,OFFSET inputID
+digit_loop:
+    mov dl,[esi]
+    cmp dl,0
+    je finished
+    cmp dl,'0'
+    jb not_a_number
+    cmp dl,'9'
+    ja not_a_number
+    imul eax,10
+    sub dl,'0'
+    movzx edx,dl
+    add eax,edx
+    inc esi
+    jmp digit_loop
+not_a_number:
+    xor eax,eax
+finished:
+    ret
+ParseID ENDP
+
+
+NumberToText PROC value:DWORD,destination:DWORD
+    push ebx
+    push ecx
+    push edx
+    push edi
+
+    mov eax,value
+    mov edi,destination
+    xor ecx,ecx
+
+    cmp eax,0
+    jne convert_digits
+    mov byte ptr [edi],'0'
+    mov byte ptr [edi+1],0
+    jmp finished
+
+convert_digits:
+    mov ebx,10
+divide_loop:
+    xor edx,edx
+    div ebx
+    push edx
+    inc ecx
+    cmp eax,0
+    jne divide_loop
+
+write_digits:
+    pop edx
+    add dl,'0'
+    mov [edi],dl
+    inc edi
+    loop write_digits
+    mov byte ptr [edi],0
+
+finished:
+    pop edi
+    pop edx
+    pop ecx
+    pop ebx
+    ret
+NumberToText ENDP
+
+
+ValidateDate PROC dateStr:DWORD
+    LOCAL month:DWORD
+    LOCAL day:DWORD
+    LOCAL year:DWORD
+    LOCAL maxDay:DWORD
+
+    invoke lstrlenA, dateStr
+    cmp eax, 10
+    jne date_invalid
+
+    mov esi, dateStr
+    mov al, [esi+2]
+    cmp al, '/'
+    jne date_invalid
+    mov al, [esi+5]
+    cmp al, '/'
+    jne date_invalid
+
+    movzx eax, byte ptr [esi]
+    cmp eax,'0'
+    jb date_invalid
+    cmp eax,'9'
+    ja date_invalid
+    sub eax,'0'
+    mov ebx, eax
+    movzx eax, byte ptr [esi+1]
+    cmp eax,'0'
+    jb date_invalid
+    cmp eax,'9'
+    ja date_invalid
+    sub eax,'0'
+    imul ebx,10
+    add ebx,eax
+    mov month, ebx
+
+    movzx eax, byte ptr [esi+3]
+    cmp eax,'0'
+    jb date_invalid
+    cmp eax,'9'
+    ja date_invalid
+    sub eax,'0'
+    mov ebx, eax
+    movzx eax, byte ptr [esi+4]
+    cmp eax,'0'
+    jb date_invalid
+    cmp eax,'9'
+    ja date_invalid
+    sub eax,'0'
+    imul ebx,10
+    add ebx,eax
+    mov day, ebx
+
+    xor ebx,ebx
+    mov ecx,6
+read_year_loop:
+    movzx eax, byte ptr [esi+ecx]
+    cmp eax,'0'
+    jb date_invalid
+    cmp eax,'9'
+    ja date_invalid
+    sub eax,'0'
+    imul ebx,10
+    add ebx,eax
+    inc ecx
+    cmp ecx,10
+    jne read_year_loop
+    mov year, ebx
+
+    mov eax, year
+    cmp eax, 2026
+    jl date_invalid
+
+    mov eax, month
+    cmp eax, 1
+    jl date_invalid
+    cmp eax, 12
+    jg date_invalid
+
+    mov eax, day
+    cmp eax, 1
+    jl date_invalid
+
+    mov eax, month
+    cmp eax,1
+    je month_has_31
+    cmp eax,3
+    je month_has_31
+    cmp eax,5
+    je month_has_31
+    cmp eax,7
+    je month_has_31
+    cmp eax,8
+    je month_has_31
+    cmp eax,10
+    je month_has_31
+    cmp eax,12
+    je month_has_31
+    cmp eax,4
+    je month_has_30
+    cmp eax,6
+    je month_has_30
+    cmp eax,9
+    je month_has_30
+    cmp eax,11
+    je month_has_30
+    jmp month_is_february
+
+month_has_31:
+    mov maxDay,31
+    jmp check_day_range
+month_has_30:
+    mov maxDay,30
+    jmp check_day_range
+
+month_is_february:
+    mov eax, year
+    xor edx,edx
+    mov ecx,4
+    div ecx
+    cmp edx,0
+    jne february_not_leap
+
+    mov eax, year
+    xor edx,edx
+    mov ecx,100
+    div ecx
+    cmp edx,0
+    jne february_is_leap
+
+    mov eax, year
+    xor edx,edx
+    mov ecx,400
+    div ecx
+    cmp edx,0
+    jne february_not_leap
+
+february_is_leap:
+    mov maxDay,29
+    jmp check_day_range
+february_not_leap:
+    mov maxDay,28
+
+check_day_range:
+    mov eax, day
+    cmp eax, maxDay
+    jg date_invalid
+
+    mov eax,1
+    ret
+
+date_invalid:
+    xor eax,eax
+    ret
+ValidateDate ENDP
+
+
+TimeToMinutes PROC hourVal:DWORD, minuteVal:DWORD, ampmChar:DWORD
+    mov ecx, hourVal
+    mov eax, ampmChar
+    cmp eax, 'A'
+    jne convert_pm
+
+    cmp ecx, 12
+    jne combine_hour_minute
+    mov ecx, 0
+    jmp combine_hour_minute
+
+convert_pm:
+    cmp ecx, 12
+    je combine_hour_minute
+    add ecx, 12
+
+combine_hour_minute:
+    mov eax, ecx
+    imul eax, 60
+    add eax, minuteVal
+    ret
+TimeToMinutes ENDP
+
+
+ValidateTime PROC timeStr:DWORD
+    LOCAL sHour:DWORD
+    LOCAL sMin:DWORD
+    LOCAL sAmpm:DWORD
+    LOCAL eHour:DWORD
+    LOCAL eMin:DWORD
+    LOCAL eAmpm:DWORD
+    LOCAL startVal:DWORD
+    LOCAL endVal:DWORD
+
+    invoke lstrlenA, timeStr
+    cmp eax, 19
+    jne time_invalid
+
+    mov esi, timeStr
+    mov al, [esi+2]
+    cmp al, ':'
+    jne time_invalid
+    mov al, [esi+5]
+    cmp al, ' '
+    jne time_invalid
+    mov al, [esi+7]
+    cmp al, 'M'
+    jne time_invalid
+    mov al, [esi+8]
+    cmp al, ' '
+    jne time_invalid
+    mov al, [esi+9]
+    cmp al, '-'
+    jne time_invalid
+    mov al, [esi+10]
+    cmp al, ' '
+    jne time_invalid
+    mov al, [esi+13]
+    cmp al, ':'
+    jne time_invalid
+    mov al, [esi+16]
+    cmp al, ' '
+    jne time_invalid
+    mov al, [esi+18]
+    cmp al, 'M'
+    jne time_invalid
+
+    movzx eax, byte ptr [esi]
+    cmp eax,'0'
+    jb time_invalid
+    cmp eax,'9'
+    ja time_invalid
+    sub eax,'0'
+    mov ebx, eax
+    movzx eax, byte ptr [esi+1]
+    cmp eax,'0'
+    jb time_invalid
+    cmp eax,'9'
+    ja time_invalid
+    sub eax,'0'
+    imul ebx,10
+    add ebx,eax
+    mov sHour, ebx
+
+    movzx eax, byte ptr [esi+3]
+    cmp eax,'0'
+    jb time_invalid
+    cmp eax,'9'
+    ja time_invalid
+    sub eax,'0'
+    mov ebx, eax
+    movzx eax, byte ptr [esi+4]
+    cmp eax,'0'
+    jb time_invalid
+    cmp eax,'9'
+    ja time_invalid
+    sub eax,'0'
+    imul ebx,10
+    add ebx,eax
+    mov sMin, ebx
+
+    movzx eax, byte ptr [esi+6]
+    cmp eax,'A'
+    je start_ampm_ok
+    cmp eax,'P'
+    je start_ampm_ok
+    jmp time_invalid
+start_ampm_ok:
+    mov sAmpm, eax
+
+    movzx eax, byte ptr [esi+11]
+    cmp eax,'0'
+    jb time_invalid
+    cmp eax,'9'
+    ja time_invalid
+    sub eax,'0'
+    mov ebx, eax
+    movzx eax, byte ptr [esi+12]
+    cmp eax,'0'
+    jb time_invalid
+    cmp eax,'9'
+    ja time_invalid
+    sub eax,'0'
+    imul ebx,10
+    add ebx,eax
+    mov eHour, ebx
+
+    movzx eax, byte ptr [esi+14]
+    cmp eax,'0'
+    jb time_invalid
+    cmp eax,'9'
+    ja time_invalid
+    sub eax,'0'
+    mov ebx, eax
+    movzx eax, byte ptr [esi+15]
+    cmp eax,'0'
+    jb time_invalid
+    cmp eax,'9'
+    ja time_invalid
+    sub eax,'0'
+    imul ebx,10
+    add ebx,eax
+    mov eMin, ebx
+
+    movzx eax, byte ptr [esi+17]
+    cmp eax,'A'
+    je end_ampm_ok
+    cmp eax,'P'
+    je end_ampm_ok
+    jmp time_invalid
+end_ampm_ok:
+    mov eAmpm, eax
+
+    mov eax, sHour
+    cmp eax, 1
+    jl time_invalid
+    cmp eax, 12
+    jg time_invalid
+    mov eax, eHour
+    cmp eax, 1
+    jl time_invalid
+    cmp eax, 12
+    jg time_invalid
+
+    mov eax, sMin
+    cmp eax, 0
+    je start_min_ok
+    cmp eax, 30
+    je start_min_ok
+    jmp time_invalid
+start_min_ok:
+    mov eax, eMin
+    cmp eax, 0
+    je end_min_ok
+    cmp eax, 30
+    je end_min_ok
+    jmp time_invalid
+end_min_ok:
+
+    invoke TimeToMinutes, sHour, sMin, sAmpm
+    mov startVal, eax
+    invoke TimeToMinutes, eHour, eMin, eAmpm
+    mov endVal, eax
+
+    mov eax, endVal
+    cmp eax, startVal
+    jg time_ok
+    mov eax, 2
+    ret
+
+time_ok:
+    mov eax,1
+    ret
+
+time_invalid:
+    xor eax,eax
+    ret
+ValidateTime ENDP
+
+
+GetDateValue PROC recIndex:DWORD
+    mov eax, recIndex
+    mov ebx, DATE_LEN+1
+    mul ebx
+    mov esi, OFFSET dates
+    add esi, eax
+
+    movzx eax, byte ptr [esi]
+    sub eax,'0'
+    mov ecx,eax
+    movzx eax, byte ptr [esi+1]
+    sub eax,'0'
+    imul ecx,10
+    add ecx,eax
+
+    movzx eax, byte ptr [esi+3]
+    sub eax,'0'
+    mov ebx,eax
+    movzx eax, byte ptr [esi+4]
+    sub eax,'0'
+    imul ebx,10
+    add ebx,eax
+
+    xor edx,edx
+    movzx eax, byte ptr [esi+6]
+    sub eax,'0'
+    add edx,eax
+    movzx eax, byte ptr [esi+7]
+    sub eax,'0'
+    imul edx,10
+    add edx,eax
+    movzx eax, byte ptr [esi+8]
+    sub eax,'0'
+    imul edx,10
+    add edx,eax
+    movzx eax, byte ptr [esi+9]
+    sub eax,'0'
+    imul edx,10
+    add edx,eax
+
+    mov eax, edx
+    imul eax, 10000
+    mov edx, ecx
+    imul edx, 100
+    add eax, edx
+    add eax, ebx
+    ret
+GetDateValue ENDP
+
+
+GetTimeValue PROC recIndex:DWORD
+    mov eax, recIndex
+    mov ebx, TIME_LEN+1
+    mul ebx
+    mov esi, OFFSET times
+    add esi, eax
+
+    movzx eax, byte ptr [esi]
+    sub eax,'0'
+    mov ecx,eax
+    movzx eax, byte ptr [esi+1]
+    sub eax,'0'
+    imul ecx,10
+    add ecx,eax
+
+    movzx eax, byte ptr [esi+3]
+    sub eax,'0'
+    mov ebx,eax
+    movzx eax, byte ptr [esi+4]
+    sub eax,'0'
+    imul ebx,10
+    add ebx,eax
+
+    movzx eax, byte ptr [esi+6]
+    cmp eax,'A'
+    jne time_is_pm
+    cmp ecx,12
+    jne combine_hm
+    mov ecx,0
+    jmp combine_hm
+time_is_pm:
+    cmp ecx,12
+    je combine_hm
+    add ecx,12
+combine_hm:
+    mov eax,ecx
+    imul eax,60
+    add eax,ebx
+    ret
+GetTimeValue ENDP
+
+
+IsRecordLess PROC recA:DWORD, recB:DWORD
+    LOCAL dateA:DWORD
+    LOCAL dateB:DWORD
+    LOCAL timeA:DWORD
+    LOCAL timeB:DWORD
+
+    invoke GetDateValue, recA
+    mov dateA, eax
+    invoke GetDateValue, recB
+    mov dateB, eax
+
+    mov eax, dateA
+    cmp eax, dateB
+    jl a_is_less
+    jg a_is_not_less
+
+    invoke GetTimeValue, recA
+    mov timeA, eax
+    invoke GetTimeValue, recB
+    mov timeB, eax
+
+    mov eax, timeA
+    cmp eax, timeB
+    jl a_is_less
+    jg a_is_not_less
+
+    mov eax, recA
+    movzx eax, byte ptr [ids+eax]
+    mov ecx, recB
+    movzx ecx, byte ptr [ids+ecx]
+    cmp eax, ecx
+    jl a_is_less
+    jmp a_is_not_less
+
+a_is_less:
+    mov eax,1
+    ret
+a_is_not_less:
+    xor eax,eax
+    ret
+IsRecordLess ENDP
+
+
+SortFCFS PROC
+    LOCAL i:DWORD
+    LOCAL j:DWORD
+    LOCAL minIdx:DWORD
+    LOCAL idxA:DWORD
+    LOCAL idxB:DWORD
+    LOCAL tmp:DWORD
+
+    mov i,0
+init_loop:
+    mov eax,i
+    cmp eax,recCount
+    jae init_done
+    mov edx,i
+    mov [sortIndex+edx],dl
+    mov eax,i
+    inc eax
+    mov i,eax
+    jmp init_loop
+init_done:
+
+    mov i,0
+outer_loop:
+    mov eax,i
+    mov ebx,recCount
+    dec ebx
+    cmp eax,ebx
+    jge sorting_done
+
+    mov eax,i
+    mov minIdx,eax
+    mov eax,i
+    inc eax
+    mov j,eax
+
+inner_loop:
+    mov eax,j
+    cmp eax,recCount
+    jae inner_done
+
+    mov ecx,j
+    movzx eax, byte ptr [sortIndex+ecx]
+    mov idxB, eax
+    mov ecx,minIdx
+    movzx eax, byte ptr [sortIndex+ecx]
+    mov idxA, eax
+
+    invoke IsRecordLess, idxB, idxA
+    cmp eax,0
+    je next_j
+    mov eax,j
+    mov minIdx,eax
+next_j:
+    mov eax,j
+    inc eax
+    mov j,eax
+    jmp inner_loop
+
+inner_done:
+    mov eax,minIdx
+    cmp eax,i
+    je no_swap_needed
+
+    mov ecx,i
+    movzx eax, byte ptr [sortIndex+ecx]
+    mov tmp,eax
+    mov ecx,minIdx
+    movzx eax, byte ptr [sortIndex+ecx]
+    mov edx,i
+    mov [sortIndex+edx],al
+    mov ecx,minIdx
+    mov eax,tmp
+    mov [sortIndex+ecx],al
+
+no_swap_needed:
+    mov eax,i
+    inc eax
+    mov i,eax
+    jmp outer_loop
+
+sorting_done:
+    ret
+SortFCFS ENDP
+
+
+RefreshList PROC
+    LOCAL currentIndex:DWORD
+    LOCAL remaining:DWORD
+
+    mov isFcfsViewActive, FALSE
+    invoke SetWindowTextA,hHdrQueue,ADDR txtQueue
+
+    cmp isDeanMode,TRUE
+    je dean_may_view_list
+    invoke SendMessageA,hList,LB_RESETCONTENT,0,0
+    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR msgDeanOnly
+    ret
+
+dean_may_view_list:
+    invoke SendMessageA,hList,LB_RESETCONTENT,0,0
+    mov eax,recCount
+    mov remaining,eax
+    mov currentIndex,0
+    cmp eax,0
+    jne build_list_loop
+    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR msgNoRecords
+    ret
+
+build_list_loop:
+    invoke lstrcpyA,ADDR listBuf,ADDR prefixID
+    mov eax,currentIndex
+    movzx eax,byte ptr [ids+eax]
+    invoke NumberToText,eax,ADDR numBuf
+    invoke lstrcatA,ADDR listBuf,ADDR numBuf
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixName
+    mov eax,currentIndex
+    mov ebx,NAME_LEN+1
+    mul ebx
+    mov edx,OFFSET names
+    add edx,eax
+    invoke lstrcatA,ADDR listBuf,edx
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixDate
+    mov eax,currentIndex
+    mov ebx,DATE_LEN+1
+    mul ebx
+    mov edx,OFFSET dates
+    add edx,eax
+    invoke lstrcatA,ADDR listBuf,edx
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixTime
+    mov eax,currentIndex
+    mov ebx,TIME_LEN+1
+    mul ebx
+    mov edx,OFFSET times
+    add edx,eax
+    invoke lstrcatA,ADDR listBuf,edx
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixPurpose
+    mov eax,currentIndex
+    mov ebx,PURPOSE_LEN+1
+    mul ebx
+    mov edx,OFFSET purposes
+    add edx,eax
+    invoke lstrcatA,ADDR listBuf,edx
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixStatus
+    mov eax,currentIndex
+    movzx eax,byte ptr [statuses+eax]
+    cmp eax,0
+    jne append_status_accepted
+    invoke lstrcatA,ADDR listBuf,ADDR statusWaiting
+    jmp add_line_to_list
+append_status_accepted:
+    invoke lstrcatA,ADDR listBuf,ADDR statusAccepted
+
+add_line_to_list:
+    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR listBuf
+
+    mov eax,currentIndex
+    inc eax
+    mov currentIndex,eax
+    mov eax,remaining
+    dec eax
+    mov remaining,eax
+    cmp eax,0
+    jne build_list_loop
+    ret
+RefreshList ENDP
+
+
+ViewSelected PROC
+    invoke SendMessageA,hList,LB_GETCURSEL,0,0
+    cmp eax,0FFFFFFFFh
+    je nothing_selected
+
+    cmp isFcfsViewActive,TRUE
+    jne selected_is_real_index
+    mov ecx,eax
+    movzx eax, byte ptr [sortIndex+ecx]
+
+selected_is_real_index:
+    invoke ShowRecord,eax
+    ret
+
+nothing_selected:
+    invoke MessageBoxA,hMainWnd,ADDR msgSelect,ADDR txtDetails,MB_OK or MB_ICONWARNING
+    ret
+ViewSelected ENDP
+
+
+ShowRecord PROC index:DWORD
+    invoke lstrcpyA,ADDR detailsBuf,ADDR detailID
+    mov eax,index
+    movzx eax,byte ptr [ids+eax]
+    invoke NumberToText,eax,ADDR numBuf
+    invoke lstrcatA,ADDR detailsBuf,ADDR numBuf
+    invoke lstrcatA,ADDR detailsBuf,ADDR newline
+
+    invoke lstrcatA,ADDR detailsBuf,ADDR detailName
+    mov eax,index
+    mov ebx,NAME_LEN+1
+    mul ebx
+    mov edx,OFFSET names
+    add edx,eax
+    invoke lstrcatA,ADDR detailsBuf,edx
+    invoke lstrcatA,ADDR detailsBuf,ADDR newline
+
+    invoke lstrcatA,ADDR detailsBuf,ADDR detailDate
+    mov eax,index
+    mov ebx,DATE_LEN+1
+    mul ebx
+    mov edx,OFFSET dates
+    add edx,eax
+    invoke lstrcatA,ADDR detailsBuf,edx
+    invoke lstrcatA,ADDR detailsBuf,ADDR newline
+
+    invoke lstrcatA,ADDR detailsBuf,ADDR detailTime
+    mov eax,index
+    mov ebx,TIME_LEN+1
+    mul ebx
+    mov edx,OFFSET times
+    add edx,eax
+    invoke lstrcatA,ADDR detailsBuf,edx
+    invoke lstrcatA,ADDR detailsBuf,ADDR newline
+
+    invoke lstrcatA,ADDR detailsBuf,ADDR detailPurpose
+    mov eax,index
+    mov ebx,PURPOSE_LEN+1
+    mul ebx
+    mov edx,OFFSET purposes
+    add edx,eax
+    invoke lstrcatA,ADDR detailsBuf,edx
+    invoke lstrcatA,ADDR detailsBuf,ADDR newline
+
+    invoke lstrcatA,ADDR detailsBuf,ADDR detailStatus
+    mov eax,index
+    movzx eax,byte ptr [statuses+eax]
+    cmp eax,0
+    jne detail_status_accepted
+    invoke lstrcatA,ADDR detailsBuf,ADDR statusWaiting
+    jmp detail_status_written
+detail_status_accepted:
+    invoke lstrcatA,ADDR detailsBuf,ADDR statusAccepted
+detail_status_written:
+    invoke lstrcatA,ADDR detailsBuf,ADDR newline
+
+    invoke lstrcatA,ADDR detailsBuf,ADDR detailQueue
+    mov eax,index
+    inc eax
+    invoke NumberToText,eax,ADDR numBuf
+    invoke lstrcatA,ADDR detailsBuf,ADDR numBuf
+
+    invoke SetWindowTextA,hDetailsBox,ADDR detailsBuf
+    ret
+ShowRecord ENDP
+
+
+ShowStudentFCFS PROC
+    LOCAL currentIndex:DWORD
+    LOCAL remaining:DWORD
+    LOCAL recordIdx:DWORD
+
+    mov isFcfsViewActive, TRUE
+    invoke SetWindowTextA,hHdrQueue,ADDR msgStudentFCFSTitle
+    invoke SendMessageA,hList,LB_RESETCONTENT,0,0
+
+    mov eax,recCount
+    mov remaining,eax
+    mov currentIndex,0
+    cmp eax,0
+    jne have_records
+    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR msgNoRecords
+    invoke SetWindowTextA,hStatus,ADDR msgNoRecords
+    ret
+
+have_records:
+    call SortFCFS
+
+fcfs_list_loop:
+    mov ecx, currentIndex
+    movzx eax, byte ptr [sortIndex+ecx]
+    mov recordIdx, eax
+
+    invoke lstrcpyA,ADDR listBuf,ADDR prefixID
+    mov eax,recordIdx
+    movzx eax,byte ptr [ids+eax]
+    invoke NumberToText,eax,ADDR numBuf
+    invoke lstrcatA,ADDR listBuf,ADDR numBuf
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixName
+    mov eax,recordIdx
+    mov ebx,NAME_LEN+1
+    mul ebx
+    mov edx,OFFSET names
+    add edx,eax
+    invoke lstrcatA,ADDR listBuf,edx
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixDate
+    mov eax,recordIdx
+    mov ebx,DATE_LEN+1
+    mul ebx
+    mov edx,OFFSET dates
+    add edx,eax
+    invoke lstrcatA,ADDR listBuf,edx
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixTime
+    mov eax,recordIdx
+    mov ebx,TIME_LEN+1
+    mul ebx
+    mov edx,OFFSET times
+    add edx,eax
+    invoke lstrcatA,ADDR listBuf,edx
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixPurpose
+    mov eax,recordIdx
+    mov ebx,PURPOSE_LEN+1
+    mul ebx
+    mov edx,OFFSET purposes
+    add edx,eax
+    invoke lstrcatA,ADDR listBuf,edx
+
+    invoke lstrcatA,ADDR listBuf,ADDR prefixStatus
+    mov eax,recordIdx
+    movzx eax,byte ptr [statuses+eax]
+    cmp eax,0
+    jne append_status_accepted
+    invoke lstrcatA,ADDR listBuf,ADDR statusWaiting
+    jmp add_line_to_list
+append_status_accepted:
+    invoke lstrcatA,ADDR listBuf,ADDR statusAccepted
+
+add_line_to_list:
+    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR listBuf
+
+    mov eax,currentIndex
+    inc eax
+    mov currentIndex,eax
+    mov eax,remaining
+    dec eax
+    mov remaining,eax
+    cmp eax,0
+    jne fcfs_list_loop
+
+    invoke SetWindowTextA,hStatus,ADDR msgStudentFCFSTitle
+    ret
+ShowStudentFCFS ENDP
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+; GUI CODE
+
 
 start:
     invoke GetModuleHandleA, NULL
@@ -421,6 +1871,7 @@ message_loop:
 program_end:
     invoke ExitProcess, 0
 
+
 WndProc PROC hWnd:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 
     cmp uMsg, WM_CREATE
@@ -429,8 +1880,6 @@ WndProc PROC hWnd:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
     je window_command
     cmp uMsg, WM_CTLCOLORSTATIC
     je window_ctlcolor
-    cmp uMsg, WM_TIMER
-    je window_timer
     cmp uMsg, WM_CLOSE
     je window_close
     cmp uMsg, WM_DESTROY
@@ -453,12 +1902,7 @@ window_ctlcolor:
     je ctlcolor_maroon
     invoke DefWindowProcA, hWnd, uMsg, wParam, lParam
     ret
-
 ctlcolor_maroon:
-    ; Opaque (not transparent) so each redraw fully erases the old
-    ; text first - prevents old/new header text from overlapping
-    ; when hHdrQueue's caption is switched between "APPOINTMENT
-    ; QUEUE" and "CURRENT FCFS APPOINTMENT LIST".
     invoke SetTextColor, wParam, COLOR_MAROON
     invoke GetSysColor, COLOR_WINDOW
     invoke SetBkColor, wParam, eax
@@ -466,12 +1910,7 @@ ctlcolor_maroon:
     invoke GetSysColorBrush, COLOR_WINDOW
     ret
 
-window_timer:
-    call UpdateClock
-    ret
-
 window_create:
-    ; ---------------- TITLE BAR ----------------
     invoke CreateWindowExA, 0, ADDR clsStatic, ADDR txtHeader, \
         WS_CHILD or WS_VISIBLE or SS_CENTER or WS_BORDER, \
         30,15,1120,45,hWnd,0,hInstance,NULL
@@ -483,13 +1922,6 @@ window_create:
         30,65,1120,22,hWnd,0,hInstance,NULL
     invoke SendMessageA, eax, WM_SETFONT, hFont, TRUE
 
-    invoke CreateWindowExA, 0, ADDR clsStatic, NULL, \
-        WS_CHILD or WS_VISIBLE or SS_CENTER or WS_BORDER, \
-        30,90,1120,24,hWnd,0,hInstance,NULL
-    mov hClockDisplay,eax
-    invoke SendMessageA, hClockDisplay, WM_SETFONT, hFont, TRUE
-
-    ; ---------------- STUDENT INFORMATION ----------------
     invoke CreateWindowExA, 0, ADDR clsStatic, ADDR txtStudent, \
         WS_CHILD or WS_VISIBLE or SS_CENTER or WS_BORDER, \
         30,125,440,26,hWnd,0,hInstance,NULL
@@ -539,12 +1971,10 @@ window_create:
     invoke CreateWindowExA, 0, ADDR clsButton, ADDR txtBook, \
         WS_CHILD or WS_VISIBLE or WS_TABSTOP or BS_DEFPUSHBUTTON, \
         50,315,220,35,hWnd,ID_BOOK,hInstance,NULL
-
     invoke CreateWindowExA, 0, ADDR clsButton, ADDR txtClear, \
         WS_CHILD or WS_VISIBLE or WS_TABSTOP, \
         280,315,150,35,hWnd,ID_CLEAR,hInstance,NULL
 
-    ; ---------------- DEAN ACCESS ----------------
     invoke CreateWindowExA, 0, ADDR clsStatic, ADDR txtDean, \
         WS_CHILD or WS_VISIBLE or SS_CENTER or WS_BORDER, \
         30,391,440,26,hWnd,0,hInstance,NULL
@@ -557,7 +1987,6 @@ window_create:
 
     invoke CreateWindowExA, 0, ADDR clsStatic, ADDR txtPassword, \
         WS_CHILD or WS_VISIBLE,50,436,125,22,hWnd,0,hInstance,NULL
-
     invoke CreateWindowExA, WS_EX_CLIENTEDGE, ADDR clsEdit, NULL, \
         WS_CHILD or WS_VISIBLE or WS_TABSTOP or ES_PASSWORD or ES_AUTOHSCROLL, \
         180,433,250,28,hWnd,ID_PASSWORD,hInstance,NULL
@@ -566,14 +1995,12 @@ window_create:
     invoke CreateWindowExA, 0, ADDR clsButton, ADDR txtLogin, \
         WS_CHILD or WS_VISIBLE or WS_TABSTOP, \
         50,476,180,35,hWnd,ID_DEANLOGIN,hInstance,NULL
-
     invoke CreateWindowExA, 0, ADDR clsButton, ADDR txtLogout, \
         WS_CHILD or WS_VISIBLE or WS_TABSTOP, \
         240,476,190,35,hWnd,ID_DEANLOGOUT,hInstance,NULL
     mov hBtnLogout,eax
     invoke EnableWindow,hBtnLogout,FALSE
 
-    ; ---------------- APPOINTMENT QUEUE / FCFS LIST (one shared area) ----------------
     invoke CreateWindowExA, 0, ADDR clsStatic, ADDR txtQueue, \
         WS_CHILD or WS_VISIBLE or SS_CENTER or WS_BORDER, \
         490,125,620,26,hWnd,0,hInstance,NULL
@@ -586,7 +2013,6 @@ window_create:
     mov hList,eax
     invoke EnableWindow,hList,FALSE
 
-    ; Dean controls below queue
     invoke CreateWindowExA, 0, ADDR clsButton, ADDR txtView, \
         WS_CHILD or WS_VISIBLE or WS_TABSTOP, \
         510,416,135,35,hWnd,ID_VIEW,hInstance,NULL
@@ -611,7 +2037,6 @@ window_create:
     mov hBtnCancel,eax
     invoke EnableWindow,hBtnCancel,FALSE
 
-    ; ID (now usable by students AND the Dean) + Move controls
     invoke CreateWindowExA, 0, ADDR clsStatic, ADDR txtID, \
         WS_CHILD or WS_VISIBLE,510,471,110,22,hWnd,0,hInstance,NULL
     invoke CreateWindowExA, WS_EX_CLIENTEDGE, ADDR clsEdit, NULL, \
@@ -645,7 +2070,6 @@ window_create:
         WS_CHILD or WS_VISIBLE or WS_TABSTOP, \
         930,511,160,35,hWnd,ID_EXIT,hInstance,NULL
 
-    ; ---------------- SELECTED APPOINTMENT (taller - full details, nothing clipped) ----------------
     invoke CreateWindowExA, 0, ADDR clsStatic, ADDR txtDetails, \
         WS_CHILD or WS_VISIBLE or SS_CENTER or WS_BORDER, \
         30,561,1080,26,hWnd,0,hInstance,NULL
@@ -658,14 +2082,10 @@ window_create:
     mov hDetailsBox,eax
     invoke EnableWindow,hDetailsBox,FALSE
 
-    ; ---------------- STATUS BAR ----------------
     invoke CreateWindowExA, 0, ADDR clsStatic, ADDR statusStudent, \
         WS_CHILD or WS_VISIBLE or WS_BORDER or SS_CENTER, \
         30,775,1080,32,hWnd,ID_STATUS,hInstance,NULL
     mov hStatus,eax
-
-    invoke SetTimer, hWnd, ID_CLOCK_TIMER, 1000, NULL
-    call UpdateClock
 
     call RefreshList
     ret
@@ -718,11 +2138,9 @@ cmd_login:
     invoke lstrcmpA,ADDR inputPassword,ADDR deanPassword
     cmp eax,0
     jne login_bad
-
     invoke SetDeanMode,TRUE
     invoke MessageBoxA,hMainWnd,ADDR msgLogin,ADDR txtDean,MB_OK or MB_ICONINFORMATION
     ret
-
 login_bad:
     invoke MessageBoxA,hMainWnd,ADDR msgWrongPassword,ADDR txtDean,MB_OK or MB_ICONWARNING
     ret
@@ -789,19 +2207,20 @@ window_close:
     ret
 
 window_destroy:
-    invoke KillTimer, hWnd, ID_CLOCK_TIMER
     invoke PostQuitMessage,0
     ret
 
 WndProc ENDP
+
 
 SetDeanMode PROC mode:DWORD
     mov eax,mode
     mov isDeanMode,eax
 
     cmp eax,TRUE
-    jne student_mode
+    jne switch_to_student_mode
 
+switch_to_dean_mode:
     invoke EnableWindow,hList,TRUE
     invoke EnableWindow,hDetailsBox,TRUE
     invoke EnableWindow,hBtnView,TRUE
@@ -818,7 +2237,7 @@ SetDeanMode PROC mode:DWORD
     invoke RefreshList
     ret
 
-student_mode:
+switch_to_student_mode:
     invoke EnableWindow,hList,FALSE
     invoke EnableWindow,hDetailsBox,FALSE
     invoke EnableWindow,hBtnView,FALSE
@@ -838,1727 +2257,44 @@ student_mode:
     ret
 SetDeanMode ENDP
 
-BookAppointment PROC
-    mov eax,recCount
-    cmp eax,MAX_RECORDS
-    jb book_ok
-    invoke MessageBoxA,hMainWnd,ADDR msgFull,ADDR txtHeader,MB_OK or MB_ICONWARNING
-    ret
 
-book_ok:
-    invoke GetWindowTextA,hEditName,ADDR inputName,64
-    invoke GetWindowTextA,hEditDate,ADDR inputDate,32
-    invoke GetWindowTextA,hEditTime,ADDR inputTime,32
-    invoke GetWindowTextA,hEditPurpose,ADDR inputPurpose,128
-
-    invoke lstrlenA,ADDR inputName
-    cmp eax,0
-    je invalid_book
-    invoke lstrlenA,ADDR inputDate
-    cmp eax,0
-    je invalid_book
-    invoke lstrlenA,ADDR inputTime
-    cmp eax,0
-    je invalid_book
-    invoke lstrlenA,ADDR inputPurpose
-    cmp eax,0
-    je invalid_book
-
-    invoke ValidateDate, ADDR inputDate
-    cmp eax,0
-    je invalid_date_book
-
-    invoke ValidateTime, ADDR inputTime
-    cmp eax,1
-    je time_ok_book
-    cmp eax,2
-    je invalid_time_range_book
-    jmp invalid_time_book
-
-time_ok_book:
-    mov eax,recCount
-    mov ebx,NAME_LEN+1
-    mul ebx
-    mov edi,OFFSET names
-    add edi,eax
-    invoke lstrcpynA,edi,ADDR inputName,NAME_LEN+1
-
-    mov eax,recCount
-    mov ebx,DATE_LEN+1
-    mul ebx
-    mov edi,OFFSET dates
-    add edi,eax
-    invoke lstrcpynA,edi,ADDR inputDate,DATE_LEN+1
-
-    mov eax,recCount
-    mov ebx,TIME_LEN+1
-    mul ebx
-    mov edi,OFFSET times
-    add edi,eax
-    invoke lstrcpynA,edi,ADDR inputTime,TIME_LEN+1
-
-    mov eax,recCount
-    mov ebx,PURPOSE_LEN+1
-    mul ebx
-    mov edi,OFFSET purposes
-    add edi,eax
-    invoke lstrcpynA,edi,ADDR inputPurpose,PURPOSE_LEN+1
-
-    ; Appointment IDs are ONLY 1-10 and follow FCFS order.
-    mov eax,recCount
-    inc eax
-    mov [ids+eax-1],al
-    mov byte ptr [statuses+eax-1],0
-
-    inc recCount
-
-    invoke SetWindowTextA,hEditName,NULL
-    invoke SetWindowTextA,hEditDate,ADDR dateTemplate
-    invoke SetWindowTextA,hEditTime,ADDR timeTemplate
-    invoke SetWindowTextA,hEditPurpose,NULL
-
-    mov eax,recCount
-    dec eax
-    movzx eax,byte ptr [ids+eax]
-    invoke NumberToText,eax,ADDR numBuf
-    invoke SetWindowTextA,hStatus,ADDR statusStudent
-    invoke MessageBoxA,hMainWnd,ADDR msgBooked,ADDR txtBook,MB_OK or MB_ICONINFORMATION
-    ret
-
-invalid_date_book:
-    invoke MessageBoxA,hMainWnd,ADDR msgInvalidDate,ADDR txtBook,MB_OK or MB_ICONWARNING
-    ret
-
-invalid_time_book:
-    invoke MessageBoxA,hMainWnd,ADDR msgInvalidTime,ADDR txtBook,MB_OK or MB_ICONWARNING
-    ret
-
-invalid_time_range_book:
-    invoke MessageBoxA,hMainWnd,ADDR msgInvalidTimeRange,ADDR txtBook,MB_OK or MB_ICONWARNING
-    ret
-
-invalid_book:
-    invoke MessageBoxA,hMainWnd,ADDR msgInvalid,ADDR txtBook,MB_OK or MB_ICONWARNING
-    ret
-BookAppointment ENDP
-
-RefreshList PROC
-    LOCAL currentIndex:DWORD
-    LOCAL remaining:DWORD
-
-    mov isFcfsViewActive, FALSE
-    invoke SetWindowTextA,hHdrQueue,ADDR txtQueue
-
-    cmp isDeanMode,TRUE
-    je refresh_allowed
-
-    invoke SendMessageA,hList,LB_RESETCONTENT,0,0
-    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR msgDeanOnly
-    ret
-
-refresh_allowed:
-    invoke SendMessageA,hList,LB_RESETCONTENT,0,0
-
-    mov eax,recCount
-    mov remaining,eax
-    mov currentIndex,0
-
-    cmp eax,0
-    jne refresh_loop
-
-    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR msgNoRecords
-    ret
-
-refresh_loop:
-    ; ID
-    invoke lstrcpyA,ADDR listBuf,ADDR prefixID
-    mov eax,currentIndex
-    movzx eax,byte ptr [ids+eax]
-    invoke NumberToText,eax,ADDR numBuf
-    invoke lstrcatA,ADDR listBuf,ADDR numBuf
-
-    ; Name
-    invoke lstrcatA,ADDR listBuf,ADDR prefixName
-    mov eax,currentIndex
-    mov ebx,NAME_LEN+1
-    mul ebx
-    mov edx,OFFSET names
-    add edx,eax
-    invoke lstrcatA,ADDR listBuf,edx
-
-    ; Date
-    invoke lstrcatA,ADDR listBuf,ADDR prefixDate
-    mov eax,currentIndex
-    mov ebx,DATE_LEN+1
-    mul ebx
-    mov edx,OFFSET dates
-    add edx,eax
-    invoke lstrcatA,ADDR listBuf,edx
-
-    ; Time
-    invoke lstrcatA,ADDR listBuf,ADDR prefixTime
-    mov eax,currentIndex
-    mov ebx,TIME_LEN+1
-    mul ebx
-    mov edx,OFFSET times
-    add edx,eax
-    invoke lstrcatA,ADDR listBuf,edx
-
-    ; Purpose
-    invoke lstrcatA,ADDR listBuf,ADDR prefixPurpose
-    mov eax,currentIndex
-    mov ebx,PURPOSE_LEN+1
-    mul ebx
-    mov edx,OFFSET purposes
-    add edx,eax
-    invoke lstrcatA,ADDR listBuf,edx
-
-    ; Status
-    invoke lstrcatA,ADDR listBuf,ADDR prefixStatus
-    mov eax,currentIndex
-    movzx eax,byte ptr [statuses+eax]
-    cmp eax,0
-    jne refresh_done_status
-
-    invoke lstrcatA,ADDR listBuf,ADDR statusWaiting
-    jmp refresh_add
-
-refresh_done_status:
-    invoke lstrcatA,ADDR listBuf,ADDR statusAccepted
-
-refresh_add:
-    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR listBuf
-
-    mov eax,currentIndex
-    inc eax
-    mov currentIndex,eax
-
-    mov eax,remaining
-    dec eax
-    mov remaining,eax
-
-    cmp eax,0
-    jne refresh_loop
-
-    ret
-RefreshList ENDP
-
-ViewSelected PROC
-    invoke SendMessageA,hList,LB_GETCURSEL,0,0
-    cmp eax,0FFFFFFFFh
-    je no_selection
-
-    cmp isFcfsViewActive,TRUE
-    jne viewsel_direct
-
-    ; The list is currently showing the sorted FCFS view, so map
-    ; the selected row through sortIndex to get the real record slot.
-    mov ecx,eax
-    movzx eax, byte ptr [sortIndex+ecx]
-
-viewsel_direct:
-    invoke ShowRecord,eax
-    ret
-no_selection:
-    invoke MessageBoxA,hMainWnd,ADDR msgSelect,ADDR txtDetails,MB_OK or MB_ICONWARNING
-    ret
-ViewSelected ENDP
-
-ShowRecord PROC index:DWORD
-    invoke lstrcpyA,ADDR detailsBuf,ADDR detailID
-    mov eax,index
-    movzx eax,byte ptr [ids+eax]
-    invoke NumberToText,eax,ADDR numBuf
-    invoke lstrcatA,ADDR detailsBuf,ADDR numBuf
-    invoke lstrcatA,ADDR detailsBuf,ADDR newline
-
-    invoke lstrcatA,ADDR detailsBuf,ADDR detailName
-    mov eax,index
-    mov ebx,NAME_LEN+1
-    mul ebx
-    mov edx,OFFSET names
-    add edx,eax
-    invoke lstrcatA,ADDR detailsBuf,edx
-    invoke lstrcatA,ADDR detailsBuf,ADDR newline
-
-    invoke lstrcatA,ADDR detailsBuf,ADDR detailDate
-    mov eax,index
-    mov ebx,DATE_LEN+1
-    mul ebx
-    mov edx,OFFSET dates
-    add edx,eax
-    invoke lstrcatA,ADDR detailsBuf,edx
-    invoke lstrcatA,ADDR detailsBuf,ADDR newline
-
-    invoke lstrcatA,ADDR detailsBuf,ADDR detailTime
-    mov eax,index
-    mov ebx,TIME_LEN+1
-    mul ebx
-    mov edx,OFFSET times
-    add edx,eax
-    invoke lstrcatA,ADDR detailsBuf,edx
-    invoke lstrcatA,ADDR detailsBuf,ADDR newline
-
-    invoke lstrcatA,ADDR detailsBuf,ADDR detailPurpose
-    mov eax,index
-    mov ebx,PURPOSE_LEN+1
-    mul ebx
-    mov edx,OFFSET purposes
-    add edx,eax
-    invoke lstrcatA,ADDR detailsBuf,edx
-    invoke lstrcatA,ADDR detailsBuf,ADDR newline
-
-    invoke lstrcatA,ADDR detailsBuf,ADDR detailStatus
-    mov eax,index
-    movzx eax,byte ptr [statuses+eax]
-    cmp eax,0
-    jne showrecord_accepted
-    invoke lstrcatA,ADDR detailsBuf,ADDR statusWaiting
-    jmp showrecord_status_done
-showrecord_accepted:
-    invoke lstrcatA,ADDR detailsBuf,ADDR statusAccepted
-showrecord_status_done:
-    invoke lstrcatA,ADDR detailsBuf,ADDR newline
-
-    invoke lstrcatA,ADDR detailsBuf,ADDR detailQueue
-    mov eax,index
-    inc eax
-    invoke NumberToText,eax,ADDR numBuf
-    invoke lstrcatA,ADDR detailsBuf,ADDR numBuf
-
-    invoke SetWindowTextA,hDetailsBox,ADDR detailsBuf
-    ret
-ShowRecord ENDP
-
-AcceptAppointment PROC
-    LOCAL currentIndex:DWORD
-    LOCAL remaining:DWORD
-    LOCAL wantedID:DWORD
-
-    invoke GetWindowTextA,hEditID,ADDR inputID,16
-    call ParseID
-    cmp eax,0
-    je accept_fail
-
-    mov wantedID,eax
-    mov currentIndex,0
-    mov eax,recCount
-    mov remaining,eax
-
-accept_find:
-    cmp remaining,0
-    je accept_fail
-
-    mov eax,currentIndex
-    movzx eax,byte ptr [ids+eax]
-    cmp eax,wantedID
-    je accept_found
-
-    mov eax,currentIndex
-    inc eax
-    mov currentIndex,eax
-
-    mov eax,remaining
-    dec eax
-    mov remaining,eax
-    jmp accept_find
-
-accept_found:
-    mov eax,currentIndex
-    movzx eax,byte ptr [statuses+eax]
-    cmp eax,0
-    jne accept_already
-
-    mov eax,currentIndex
-    mov byte ptr [statuses+eax],1
-
-    call RefreshList
-    invoke ShowRecord,currentIndex
-    invoke MessageBoxA,hMainWnd,ADDR msgAccepted,ADDR txtAccept,MB_OK or MB_ICONINFORMATION
-    ret
-
-accept_already:
-    invoke MessageBoxA,hMainWnd,ADDR msgAlreadyAccepted,ADDR txtAccept,MB_OK or MB_ICONWARNING
-    ret
-
-accept_fail:
-    invoke MessageBoxA,hMainWnd,ADDR msgNotFound,ADDR txtAccept,MB_OK or MB_ICONWARNING
-    ret
-AcceptAppointment ENDP
-
-CancelAppointment PROC
-    LOCAL currentIndex:DWORD
-    LOCAL remaining:DWORD
-    LOCAL wantedID:DWORD
-    LOCAL sourceIndex:DWORD
-    LOCAL destinationIndex:DWORD
-
-    invoke GetWindowTextA,hEditID,ADDR inputID,16
-    call ParseID
-    cmp eax,0
-    je cancel_fail
-
-    mov wantedID,eax
-    mov currentIndex,0
-    mov eax,recCount
-    mov remaining,eax
-
-find_cancel:
-    cmp remaining,0
-    je cancel_fail
-
-    mov eax,currentIndex
-    movzx eax,byte ptr [ids+eax]
-    cmp eax,wantedID
-    je cancel_found
-
-    mov eax,currentIndex
-    inc eax
-    mov currentIndex,eax
-
-    mov eax,remaining
-    dec eax
-    mov remaining,eax
-    jmp find_cancel
-
-cancel_found:
-    mov eax,recCount
-    dec eax
-    cmp currentIndex,eax
-    jae cancel_last
-
-    mov eax,currentIndex
-    inc eax
-    mov sourceIndex,eax
-    mov eax,currentIndex
-    mov destinationIndex,eax
-
-shift_records:
-    mov eax,sourceIndex
-    mov ebx,eax
-    mov eax,recCount
-    dec eax
-    cmp ebx,eax
-    ja shift_finished
-
-    invoke CopyRecord,sourceIndex,destinationIndex
-
-    mov eax,sourceIndex
-    inc eax
-    mov sourceIndex,eax
-
-    mov eax,destinationIndex
-    inc eax
-    mov destinationIndex,eax
-    jmp shift_records
-
-shift_finished:
-cancel_last:
-    dec recCount
-    mov eax,recCount
-    invoke ClearRecord,eax
-    invoke SetWindowTextA,hEditID,NULL
-    invoke SetWindowTextA,hDetailsBox,NULL
-    call RefreshList
-    invoke MessageBoxA,hMainWnd,ADDR msgCancelled,ADDR txtCancel,MB_OK or MB_ICONINFORMATION
-    ret
-
-cancel_fail:
-    invoke MessageBoxA,hMainWnd,ADDR msgNotFound,ADDR txtCancel,MB_OK or MB_ICONWARNING
-    ret
-CancelAppointment ENDP
-
-MoveAppointment PROC
-    LOCAL currentIndex:DWORD
-    LOCAL remaining:DWORD
-    LOCAL wantedID:DWORD
-
-    ; Dean selects an appointment ID, then changes Date and Time fields.
-    invoke GetWindowTextA,hEditID,ADDR inputID,16
-    call ParseID
-    cmp eax,0
-    je move_fail
-
-    mov wantedID,eax
-    mov currentIndex,0
-    mov eax,recCount
-    mov remaining,eax
-
-find_move:
-    cmp remaining,0
-    je move_fail
-
-    mov eax,currentIndex
-    movzx eax,byte ptr [ids+eax]
-    cmp eax,wantedID
-    je move_found
-
-    mov eax,currentIndex
-    inc eax
-    mov currentIndex,eax
-
-    mov eax,remaining
-    dec eax
-    mov remaining,eax
-    jmp find_move
-
-move_found:
-    invoke GetWindowTextA,hEditDate,ADDR inputDate,32
-    invoke GetWindowTextA,hEditTime,ADDR inputTime,32
-    invoke lstrlenA,ADDR inputDate
-    cmp eax,0
-    je move_invalid
-    invoke lstrlenA,ADDR inputTime
-    cmp eax,0
-    je move_invalid
-
-    invoke ValidateDate, ADDR inputDate
-    cmp eax,0
-    je move_invalid_date
-
-    invoke ValidateTime, ADDR inputTime
-    cmp eax,1
-    je move_time_ok
-    cmp eax,2
-    je move_invalid_time_range
-    jmp move_invalid_time
-
-move_time_ok:
-    mov eax,currentIndex
-    mov ebx,DATE_LEN+1
-    mul ebx
-    mov edi,OFFSET dates
-    add edi,eax
-    invoke lstrcpynA,edi,ADDR inputDate,DATE_LEN+1
-
-    mov eax,currentIndex
-    mov ebx,TIME_LEN+1
-    mul ebx
-    mov edi,OFFSET times
-    add edi,eax
-    invoke lstrcpynA,edi,ADDR inputTime,TIME_LEN+1
-
-    call RefreshList
-    invoke ShowRecord,currentIndex
-    invoke MessageBoxA,hMainWnd,ADDR msgMoved,ADDR txtMove,MB_OK or MB_ICONINFORMATION
-    ret
-
-move_invalid_date:
-    invoke MessageBoxA,hMainWnd,ADDR msgInvalidDate,ADDR txtMove,MB_OK or MB_ICONWARNING
-    ret
-
-move_invalid_time:
-    invoke MessageBoxA,hMainWnd,ADDR msgInvalidTime,ADDR txtMove,MB_OK or MB_ICONWARNING
-    ret
-
-move_invalid_time_range:
-    invoke MessageBoxA,hMainWnd,ADDR msgInvalidTimeRange,ADDR txtMove,MB_OK or MB_ICONWARNING
-    ret
-
-move_invalid:
-    invoke MessageBoxA,hMainWnd,ADDR msgInvalid,ADDR txtMove,MB_OK or MB_ICONWARNING
-    ret
-
-move_fail:
-    invoke MessageBoxA,hMainWnd,ADDR msgNotFound,ADDR txtMove,MB_OK or MB_ICONWARNING
-    ret
-MoveAppointment ENDP
-
-; ============================================================
-; ShowStudentFCFS - displays the shared appointment list area
-; sorted by appointment date, then time, then Appointment ID
-; (tie-breaker). Does not create a second list; it replaces the
-; contents of the same hList control the Dean queue view uses.
-; ============================================================
-ShowStudentFCFS PROC
-    LOCAL currentIndex:DWORD
-    LOCAL remaining:DWORD
-    LOCAL recordIdx:DWORD
-
-    mov isFcfsViewActive, TRUE
-    invoke SetWindowTextA,hHdrQueue,ADDR msgStudentFCFSTitle
-
-    invoke SendMessageA,hList,LB_RESETCONTENT,0,0
-
-    mov eax,recCount
-    mov remaining,eax
-    mov currentIndex,0
-
-    cmp eax,0
-    jne fcfs_have_records
-
-    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR msgNoRecords
-    invoke SetWindowTextA,hStatus,ADDR msgNoRecords
-    ret
-
-fcfs_have_records:
-    call SortFCFS
-
-student_fcfs_loop:
-    mov ecx, currentIndex
-    movzx eax, byte ptr [sortIndex+ecx]
-    mov recordIdx, eax
-
-    ; ID
-    invoke lstrcpyA,ADDR listBuf,ADDR prefixID
-    mov eax,recordIdx
-    movzx eax,byte ptr [ids+eax]
-    invoke NumberToText,eax,ADDR numBuf
-    invoke lstrcatA,ADDR listBuf,ADDR numBuf
-
-    ; Student name
-    invoke lstrcatA,ADDR listBuf,ADDR prefixName
-    mov eax,recordIdx
-    mov ebx,NAME_LEN+1
-    mul ebx
-    mov edx,OFFSET names
-    add edx,eax
-    invoke lstrcatA,ADDR listBuf,edx
-
-    ; Date
-    invoke lstrcatA,ADDR listBuf,ADDR prefixDate
-    mov eax,recordIdx
-    mov ebx,DATE_LEN+1
-    mul ebx
-    mov edx,OFFSET dates
-    add edx,eax
-    invoke lstrcatA,ADDR listBuf,edx
-
-    ; Time
-    invoke lstrcatA,ADDR listBuf,ADDR prefixTime
-    mov eax,recordIdx
-    mov ebx,TIME_LEN+1
-    mul ebx
-    mov edx,OFFSET times
-    add edx,eax
-    invoke lstrcatA,ADDR listBuf,edx
-
-    ; Purpose
-    invoke lstrcatA,ADDR listBuf,ADDR prefixPurpose
-    mov eax,recordIdx
-    mov ebx,PURPOSE_LEN+1
-    mul ebx
-    mov edx,OFFSET purposes
-    add edx,eax
-    invoke lstrcatA,ADDR listBuf,edx
-
-    ; Status
-    invoke lstrcatA,ADDR listBuf,ADDR prefixStatus
-    mov eax,recordIdx
-    movzx eax,byte ptr [statuses+eax]
-    cmp eax,0
-    jne student_fcfs_accepted
-
-    invoke lstrcatA,ADDR listBuf,ADDR statusWaiting
-    jmp student_fcfs_add
-
-student_fcfs_accepted:
-    invoke lstrcatA,ADDR listBuf,ADDR statusAccepted
-
-student_fcfs_add:
-    invoke SendMessageA,hList,LB_ADDSTRING,0,ADDR listBuf
-
-    mov eax,currentIndex
-    inc eax
-    mov currentIndex,eax
-
-    mov eax,remaining
-    dec eax
-    mov remaining,eax
-
-    cmp eax,0
-    jne student_fcfs_loop
-
-student_fcfs_finished:
-    invoke SetWindowTextA,hStatus,ADDR msgStudentFCFSTitle
-    ret
-ShowStudentFCFS ENDP
-
-MarkDone PROC
-    LOCAL currentIndex:DWORD
-    LOCAL remaining:DWORD
-    LOCAL wantedID:DWORD
-    LOCAL sourceIndex:DWORD
-    LOCAL destinationIndex:DWORD
-
-    invoke GetWindowTextA,hEditID,ADDR inputID,16
-    call ParseID
-    cmp eax,0
-    je done_fail
-
-    mov wantedID,eax
-    mov currentIndex,0
-    mov eax,recCount
-    mov remaining,eax
-
-done_find:
-    cmp remaining,0
-    je done_fail
-
-    mov eax,currentIndex
-    movzx eax,byte ptr [ids+eax]
-    cmp eax,wantedID
-    je done_found
-
-    mov eax,currentIndex
-    inc eax
-    mov currentIndex,eax
-
-    mov eax,remaining
-    dec eax
-    mov remaining,eax
-    jmp done_find
-
-done_found:
-    mov eax,recCount
-    dec eax
-    cmp currentIndex,eax
-    jae done_last
-
-    mov eax,currentIndex
-    inc eax
-    mov sourceIndex,eax
-    mov eax,currentIndex
-    mov destinationIndex,eax
-
-done_shift:
-    mov eax,sourceIndex
-    mov ebx,eax
-    mov eax,recCount
-    cmp ebx,eax
-    jae done_last
-
-    invoke CopyRecord,sourceIndex,destinationIndex
-
-    mov eax,sourceIndex
-    inc eax
-    mov sourceIndex,eax
-
-    mov eax,destinationIndex
-    inc eax
-    mov destinationIndex,eax
-    jmp done_shift
-
-done_last:
-    dec recCount
-    mov eax,recCount
-    invoke ClearRecord,eax
-
-    ; Renumber the active queue 1..recCount.
-    mov currentIndex,0
-    mov eax,recCount
-    mov remaining,eax
-    mov ebx,1
-
-renumber_done_queue:
-    cmp remaining,0
-    je done_refresh
-    mov eax,currentIndex
-    mov [ids+eax],bl
-    inc ebx
-
-    mov eax,currentIndex
-    inc eax
-    mov currentIndex,eax
-
-    mov eax,remaining
-    dec eax
-    mov remaining,eax
-    jmp renumber_done_queue
-
-done_refresh:
-    invoke SetWindowTextA,hEditID,NULL
-    invoke SetWindowTextA,hDetailsBox,NULL
-    call RefreshList
-    invoke MessageBoxA,hMainWnd,ADDR msgDone,ADDR txtDone,MB_OK or MB_ICONINFORMATION
-    ret
-
-done_fail:
-    invoke MessageBoxA,hMainWnd,ADDR msgDoneFail,ADDR txtDone,MB_OK or MB_ICONWARNING
-    ret
-MarkDone ENDP
-
-CheckMyStatus PROC
-    LOCAL currentIndex:DWORD
-    LOCAL remaining:DWORD
-    LOCAL wantedID:DWORD
-
-    invoke GetWindowTextA,hEditID,ADDR inputID,16
-    call ParseID
-    cmp eax,0
-    je check_not_found
-
-    mov wantedID,eax
-    mov currentIndex,0
-    mov eax,recCount
-    mov remaining,eax
-
-check_find:
-    cmp remaining,0
-    je check_not_found
-
-    mov eax,currentIndex
-    movzx eax,byte ptr [ids+eax]
-    cmp eax,wantedID
-    je check_found
-
-    mov eax,currentIndex
-    inc eax
-    mov currentIndex,eax
-
-    mov eax,remaining
-    dec eax
-    mov remaining,eax
-    jmp check_find
-
-check_found:
-    invoke ShowRecord,currentIndex
-    mov eax,currentIndex
-    movzx eax,byte ptr [statuses+eax]
-    cmp eax,0
-    jne check_done
-
-    invoke SetWindowTextA,hStatus,ADDR msgStatusFound
-    invoke MessageBoxA,hMainWnd,ADDR msgStatusWaiting,ADDR txtCheck,MB_OK or MB_ICONINFORMATION
-    ret
-
-check_done:
-    invoke SetWindowTextA,hStatus,ADDR msgStatusDone
-    invoke MessageBoxA,hMainWnd,ADDR msgStatusDone,ADDR txtCheck,MB_OK or MB_ICONINFORMATION
-    ret
-
-check_not_found:
-    invoke MessageBoxA,hMainWnd,ADDR msgStatusNotFound,ADDR txtCheck,MB_OK or MB_ICONWARNING
-    ret
-CheckMyStatus ENDP
-
-CopyRecord PROC sourceIndex:DWORD,destinationIndex:DWORD
-    mov eax,sourceIndex
-    mov dl,[ids+eax]
-    mov eax,destinationIndex
-    mov [ids+eax],dl
-
-    mov eax,sourceIndex
-    mov dl,[statuses+eax]
-    mov eax,destinationIndex
-    mov [statuses+eax],dl
-
-    mov eax,sourceIndex
-    mov ebx,NAME_LEN+1
-    mul ebx
-    mov esi,OFFSET names
-    add esi,eax
-    mov eax,destinationIndex
-    mov ebx,NAME_LEN+1
-    mul ebx
-    mov edi,OFFSET names
-    add edi,eax
-    invoke lstrcpynA,edi,esi,NAME_LEN+1
-
-    mov eax,sourceIndex
-    mov ebx,DATE_LEN+1
-    mul ebx
-    mov esi,OFFSET dates
-    add esi,eax
-    mov eax,destinationIndex
-    mov ebx,DATE_LEN+1
-    mul ebx
-    mov edi,OFFSET dates
-    add edi,eax
-    invoke lstrcpynA,edi,esi,DATE_LEN+1
-
-    mov eax,sourceIndex
-    mov ebx,TIME_LEN+1
-    mul ebx
-    mov esi,OFFSET times
-    add esi,eax
-    mov eax,destinationIndex
-    mov ebx,TIME_LEN+1
-    mul ebx
-    mov edi,OFFSET times
-    add edi,eax
-    invoke lstrcpynA,edi,esi,TIME_LEN+1
-
-    mov eax,sourceIndex
-    mov ebx,PURPOSE_LEN+1
-    mul ebx
-    mov esi,OFFSET purposes
-    add esi,eax
-    mov eax,destinationIndex
-    mov ebx,PURPOSE_LEN+1
-    mul ebx
-    mov edi,OFFSET purposes
-    add edi,eax
-    invoke lstrcpynA,edi,esi,PURPOSE_LEN+1
-    ret
-CopyRecord ENDP
-
-ClearRecord PROC index:DWORD
-    mov eax,index
-    mov byte ptr [ids+eax],0
-    mov byte ptr [statuses+eax],0
-
-    mov eax,index
-    mov ebx,NAME_LEN+1
-    mul ebx
-    mov edi,OFFSET names
-    add edi,eax
-    mov ecx,NAME_LEN+1
-    xor eax,eax
-    rep stosb
-
-    mov eax,index
-    mov ebx,DATE_LEN+1
-    mul ebx
-    mov edi,OFFSET dates
-    add edi,eax
-    mov ecx,DATE_LEN+1
-    xor eax,eax
-    rep stosb
-
-    mov eax,index
-    mov ebx,TIME_LEN+1
-    mul ebx
-    mov edi,OFFSET times
-    add edi,eax
-    mov ecx,TIME_LEN+1
-    xor eax,eax
-    rep stosb
-
-    mov eax,index
-    mov ebx,PURPOSE_LEN+1
-    mul ebx
-    mov edi,OFFSET purposes
-    add edi,eax
-    mov ecx,PURPOSE_LEN+1
-    xor eax,eax
-    rep stosb
-    ret
-ClearRecord ENDP
-
-ParseID PROC
-    xor eax,eax
-    mov esi,OFFSET inputID
-parse_loop:
-    mov dl,[esi]
-    cmp dl,0
-    je parse_done
-    cmp dl,'0'
-    jb parse_bad
-    cmp dl,'9'
-    ja parse_bad
-    imul eax,10
-    sub dl,'0'
-    movzx edx,dl
-    add eax,edx
-    inc esi
-    jmp parse_loop
-parse_bad:
-    xor eax,eax
-parse_done:
-    ret
-ParseID ENDP
-
-NumberToText PROC value:DWORD,destination:DWORD
-    push ebx
-    push ecx
-    push edx
-    push edi
-
-    mov eax,value
-    mov edi,destination
-    xor ecx,ecx
-    cmp eax,0
-    jne number_convert
-    mov byte ptr [edi],'0'
-    mov byte ptr [edi+1],0
-    jmp number_done
-
-number_convert:
-    mov ebx,10
-number_divide:
-    xor edx,edx
-    div ebx
-    push edx
-    inc ecx
-    cmp eax,0
-    jne number_divide
-
-number_write:
-    pop edx
-    add dl,'0'
-    mov [edi],dl
-    inc edi
-    loop number_write
-    mov byte ptr [edi],0
-
-number_done:
-    pop edi
-    pop edx
-    pop ecx
-    pop ebx
-    ret
-NumberToText ENDP
-
-; ============================================================
-; PadNumber2 - writes value (0-99) as a zero-padded 2 digit
-; ASCII string (plus null terminator) to destination.
-; ============================================================
-PadNumber2 PROC value:DWORD, destination:DWORD
-    push ebx
-    push ecx
-    push edx
-
-    mov eax, value
-    xor edx, edx
-    mov ebx, 10
-    div ebx
-    mov ecx, destination
-    add al, '0'
-    mov [ecx], al
-    mov al, dl
-    add al, '0'
-    mov [ecx+1], al
-    mov byte ptr [ecx+2], 0
-
-    pop edx
-    pop ecx
-    pop ebx
-    ret
-PadNumber2 ENDP
-
-; ============================================================
-; UpdateClock - reads the current local date/time from Windows
-; and displays it on the dashboard clock control. Called once
-; at startup and once per second via WM_TIMER.
-; ============================================================
-UpdateClock PROC
-    LOCAL curTime:SYSTEMTIME
-
-    invoke GetLocalTime, ADDR curTime
-
-    invoke lstrcpyA, ADDR clockBuf, ADDR clockPrefix
-
-    movzx eax, curTime.wMonth
-    invoke PadNumber2, eax, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR sepSlash
-
-    movzx eax, curTime.wDay
-    invoke PadNumber2, eax, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR sepSlash
-
-    movzx eax, curTime.wYear
-    invoke NumberToText, eax, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR sepSpace
-
-    movzx eax, curTime.wHour
-    invoke PadNumber2, eax, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR sepColon
-
-    movzx eax, curTime.wMinute
-    invoke PadNumber2, eax, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR sepColon
-
-    movzx eax, curTime.wSecond
-    invoke PadNumber2, eax, ADDR clockNumBuf
-    invoke lstrcatA, ADDR clockBuf, ADDR clockNumBuf
-
-    invoke SetWindowTextA, hClockDisplay, ADDR clockBuf
-    ret
-UpdateClock ENDP
-
-; ============================================================
-; ValidateDate - validates a "MM/DD/YYYY" string (as produced
-; by the masked Date field). Returns eax=1 if the date is a
-; real calendar date with year 2026 or later; eax=0 otherwise.
-; Rejects incomplete masks, bad separators, month outside
-; 1-12, day outside the valid range for that month, and
-; correctly accounts for leap years in February.
-; ============================================================
-ValidateDate PROC dateStr:DWORD
-    LOCAL month:DWORD
-    LOCAL day:DWORD
-    LOCAL year:DWORD
-    LOCAL maxDay:DWORD
-
-    invoke lstrlenA, dateStr
-    cmp eax, 10
-    jne validate_date_fail
-
-    mov esi, dateStr
-    mov al, [esi+2]
-    cmp al, '/'
-    jne validate_date_fail
-    mov al, [esi+5]
-    cmp al, '/'
-    jne validate_date_fail
-
-    ; Month digits at offsets 0,1
-    movzx eax, byte ptr [esi]
-    cmp eax,'0'
-    jb validate_date_fail
-    cmp eax,'9'
-    ja validate_date_fail
-    sub eax,'0'
-    mov ebx, eax
-    movzx eax, byte ptr [esi+1]
-    cmp eax,'0'
-    jb validate_date_fail
-    cmp eax,'9'
-    ja validate_date_fail
-    sub eax,'0'
-    imul ebx,10
-    add ebx,eax
-    mov month, ebx
-
-    ; Day digits at offsets 3,4
-    movzx eax, byte ptr [esi+3]
-    cmp eax,'0'
-    jb validate_date_fail
-    cmp eax,'9'
-    ja validate_date_fail
-    sub eax,'0'
-    mov ebx, eax
-    movzx eax, byte ptr [esi+4]
-    cmp eax,'0'
-    jb validate_date_fail
-    cmp eax,'9'
-    ja validate_date_fail
-    sub eax,'0'
-    imul ebx,10
-    add ebx,eax
-    mov day, ebx
-
-    ; Year digits at offsets 6,7,8,9
-    xor ebx,ebx
-    mov ecx,6
-year_loop:
-    movzx eax, byte ptr [esi+ecx]
-    cmp eax,'0'
-    jb validate_date_fail
-    cmp eax,'9'
-    ja validate_date_fail
-    sub eax,'0'
-    imul ebx,10
-    add ebx,eax
-    inc ecx
-    cmp ecx,10
-    jne year_loop
-    mov year, ebx
-
-    mov eax, year
-    cmp eax, 2026
-    jl validate_date_fail
-
-    mov eax, month
-    cmp eax, 1
-    jl validate_date_fail
-    cmp eax, 12
-    jg validate_date_fail
-
-    mov eax, day
-    cmp eax, 1
-    jl validate_date_fail
-
-    mov eax, month
-    cmp eax,1
-    je vdate_month_31
-    cmp eax,3
-    je vdate_month_31
-    cmp eax,5
-    je vdate_month_31
-    cmp eax,7
-    je vdate_month_31
-    cmp eax,8
-    je vdate_month_31
-    cmp eax,10
-    je vdate_month_31
-    cmp eax,12
-    je vdate_month_31
-    cmp eax,4
-    je vdate_month_30
-    cmp eax,6
-    je vdate_month_30
-    cmp eax,9
-    je vdate_month_30
-    cmp eax,11
-    je vdate_month_30
-    jmp vdate_month_feb
-
-vdate_month_31:
-    mov maxDay,31
-    jmp vdate_check_day
-
-vdate_month_30:
-    mov maxDay,30
-    jmp vdate_check_day
-
-vdate_month_feb:
-    mov eax, year
-    xor edx,edx
-    mov ecx,4
-    div ecx
-    cmp edx,0
-    jne vdate_feb_not_leap
-
-    mov eax, year
-    xor edx,edx
-    mov ecx,100
-    div ecx
-    cmp edx,0
-    jne vdate_feb_leap
-
-    mov eax, year
-    xor edx,edx
-    mov ecx,400
-    div ecx
-    cmp edx,0
-    jne vdate_feb_not_leap
-
-vdate_feb_leap:
-    mov maxDay,29
-    jmp vdate_check_day
-
-vdate_feb_not_leap:
-    mov maxDay,28
-
-vdate_check_day:
-    mov eax, day
-    cmp eax, maxDay
-    jg validate_date_fail
-
-    mov eax,1
-    ret
-
-validate_date_fail:
-    xor eax,eax
-    ret
-ValidateDate ENDP
-
-; ============================================================
-; TimeToMinutes - converts a 12-hour clock reading (hourVal
-; 1-12, minuteVal 0/30, ampmChar 'A' or 'P') into minutes-since-
-; midnight (0-1439), for chronological comparison.
-; ============================================================
-TimeToMinutes PROC hourVal:DWORD, minuteVal:DWORD, ampmChar:DWORD
-    mov ecx, hourVal
-    mov eax, ampmChar
-    cmp eax, 'A'
-    jne ttm_pm
-
-    cmp ecx, 12
-    jne ttm_combine
-    mov ecx, 0
-    jmp ttm_combine
-
-ttm_pm:
-    cmp ecx, 12
-    je ttm_combine
-    add ecx, 12
-
-ttm_combine:
-    mov eax, ecx
-    imul eax, 60
-    add eax, minuteVal
-    ret
-TimeToMinutes ENDP
-
-; ============================================================
-; ValidateTime - validates a "hh:mm AM - hh:mm AM" (or PM)
-; START/END range string, as produced by the masked Time field.
-; Requires both hours 1-12, both minutes 00 or 30 only (30-
-; minute increments), and the end time strictly later than the
-; start time.
-; Returns eax=1 if valid.
-; Returns eax=0 if the format/interval is invalid (bad mask,
-; bad hour, or a minute other than :00/:30).
-; Returns eax=2 if the format is fine but the end time is not
-; later than the start time.
-; ============================================================
-ValidateTime PROC timeStr:DWORD
-    LOCAL sHour:DWORD
-    LOCAL sMin:DWORD
-    LOCAL sAmpm:DWORD
-    LOCAL eHour:DWORD
-    LOCAL eMin:DWORD
-    LOCAL eAmpm:DWORD
-    LOCAL startVal:DWORD
-    LOCAL endVal:DWORD
-
-    invoke lstrlenA, timeStr
-    cmp eax, 19
-    jne vtime_fail
-
-    mov esi, timeStr
-
-    ; Fixed literal positions
-    mov al, [esi+2]
-    cmp al, ':'
-    jne vtime_fail
-    mov al, [esi+5]
-    cmp al, ' '
-    jne vtime_fail
-    mov al, [esi+7]
-    cmp al, 'M'
-    jne vtime_fail
-    mov al, [esi+8]
-    cmp al, ' '
-    jne vtime_fail
-    mov al, [esi+9]
-    cmp al, '-'
-    jne vtime_fail
-    mov al, [esi+10]
-    cmp al, ' '
-    jne vtime_fail
-    mov al, [esi+13]
-    cmp al, ':'
-    jne vtime_fail
-    mov al, [esi+16]
-    cmp al, ' '
-    jne vtime_fail
-    mov al, [esi+18]
-    cmp al, 'M'
-    jne vtime_fail
-
-    ; Start hour digits at offsets 0,1
-    movzx eax, byte ptr [esi]
-    cmp eax,'0'
-    jb vtime_fail
-    cmp eax,'9'
-    ja vtime_fail
-    sub eax,'0'
-    mov ebx, eax
-    movzx eax, byte ptr [esi+1]
-    cmp eax,'0'
-    jb vtime_fail
-    cmp eax,'9'
-    ja vtime_fail
-    sub eax,'0'
-    imul ebx,10
-    add ebx,eax
-    mov sHour, ebx
-
-    ; Start minute digits at offsets 3,4
-    movzx eax, byte ptr [esi+3]
-    cmp eax,'0'
-    jb vtime_fail
-    cmp eax,'9'
-    ja vtime_fail
-    sub eax,'0'
-    mov ebx, eax
-    movzx eax, byte ptr [esi+4]
-    cmp eax,'0'
-    jb vtime_fail
-    cmp eax,'9'
-    ja vtime_fail
-    sub eax,'0'
-    imul ebx,10
-    add ebx,eax
-    mov sMin, ebx
-
-    ; Start AM/PM letter at offset 6
-    movzx eax, byte ptr [esi+6]
-    cmp eax,'A'
-    je vtime_s_ampm_ok
-    cmp eax,'P'
-    je vtime_s_ampm_ok
-    jmp vtime_fail
-vtime_s_ampm_ok:
-    mov sAmpm, eax
-
-    ; End hour digits at offsets 11,12
-    movzx eax, byte ptr [esi+11]
-    cmp eax,'0'
-    jb vtime_fail
-    cmp eax,'9'
-    ja vtime_fail
-    sub eax,'0'
-    mov ebx, eax
-    movzx eax, byte ptr [esi+12]
-    cmp eax,'0'
-    jb vtime_fail
-    cmp eax,'9'
-    ja vtime_fail
-    sub eax,'0'
-    imul ebx,10
-    add ebx,eax
-    mov eHour, ebx
-
-    ; End minute digits at offsets 14,15
-    movzx eax, byte ptr [esi+14]
-    cmp eax,'0'
-    jb vtime_fail
-    cmp eax,'9'
-    ja vtime_fail
-    sub eax,'0'
-    mov ebx, eax
-    movzx eax, byte ptr [esi+15]
-    cmp eax,'0'
-    jb vtime_fail
-    cmp eax,'9'
-    ja vtime_fail
-    sub eax,'0'
-    imul ebx,10
-    add ebx,eax
-    mov eMin, ebx
-
-    ; End AM/PM letter at offset 17
-    movzx eax, byte ptr [esi+17]
-    cmp eax,'A'
-    je vtime_e_ampm_ok
-    cmp eax,'P'
-    je vtime_e_ampm_ok
-    jmp vtime_fail
-vtime_e_ampm_ok:
-    mov eAmpm, eax
-
-    ; Hours must be 1-12
-    mov eax, sHour
-    cmp eax, 1
-    jl vtime_fail
-    cmp eax, 12
-    jg vtime_fail
-
-    mov eax, eHour
-    cmp eax, 1
-    jl vtime_fail
-    cmp eax, 12
-    jg vtime_fail
-
-    ; Minutes must be exactly 00 or 30 (30-minute intervals only)
-    mov eax, sMin
-    cmp eax, 0
-    je vtime_smin_ok
-    cmp eax, 30
-    je vtime_smin_ok
-    jmp vtime_fail
-vtime_smin_ok:
-
-    mov eax, eMin
-    cmp eax, 0
-    je vtime_emin_ok
-    cmp eax, 30
-    je vtime_emin_ok
-    jmp vtime_fail
-vtime_emin_ok:
-
-    invoke TimeToMinutes, sHour, sMin, sAmpm
-    mov startVal, eax
-    invoke TimeToMinutes, eHour, eMin, eAmpm
-    mov endVal, eax
-
-    mov eax, endVal
-    cmp eax, startVal
-    jg vtime_ok
-
-    mov eax, 2
-    ret
-
-vtime_ok:
-    mov eax,1
-    ret
-
-vtime_fail:
-    xor eax,eax
-    ret
-ValidateTime ENDP
-
-; ============================================================
-; GetDateValue - parses record recIndex's stored "MM/DD/YYYY"
-; date into a single comparable integer: year*10000 + month*100
-; + day. Used only for FCFS sorting; the date is assumed to
-; already be valid (checked by ValidateDate at entry time).
-; ============================================================
-GetDateValue PROC recIndex:DWORD
-    mov eax, recIndex
-    mov ebx, DATE_LEN+1
-    mul ebx
-    mov esi, OFFSET dates
-    add esi, eax
-
-    movzx eax, byte ptr [esi]
-    sub eax,'0'
-    mov ecx,eax
-    movzx eax, byte ptr [esi+1]
-    sub eax,'0'
-    imul ecx,10
-    add ecx,eax          ; ecx = month
-
-    movzx eax, byte ptr [esi+3]
-    sub eax,'0'
-    mov ebx,eax
-    movzx eax, byte ptr [esi+4]
-    sub eax,'0'
-    imul ebx,10
-    add ebx,eax           ; ebx = day
-
-    xor edx,edx
-    movzx eax, byte ptr [esi+6]
-    sub eax,'0'
-    add edx,eax
-    movzx eax, byte ptr [esi+7]
-    sub eax,'0'
-    imul edx,10
-    add edx,eax
-    movzx eax, byte ptr [esi+8]
-    sub eax,'0'
-    imul edx,10
-    add edx,eax
-    movzx eax, byte ptr [esi+9]
-    sub eax,'0'
-    imul edx,10
-    add edx,eax            ; edx = year
-
-    mov eax, edx
-    imul eax, 10000
-    mov edx, ecx
-    imul edx, 100
-    add eax, edx
-    add eax, ebx
-    ret
-GetDateValue ENDP
-
-; ============================================================
-; GetTimeValue - parses the START time out of record recIndex's
-; stored "hh:mm AM - hh:mm AM" range (the start segment occupies
-; the same offsets 0,1,3,4,6 as the original single-time mask)
-; into minutes-since-midnight (0-1439) for chronological
-; comparison. Assumed already valid (checked by ValidateTime).
-; ============================================================
-GetTimeValue PROC recIndex:DWORD
-    mov eax, recIndex
-    mov ebx, TIME_LEN+1
-    mul ebx
-    mov esi, OFFSET times
-    add esi, eax
-
-    movzx eax, byte ptr [esi]
-    sub eax,'0'
-    mov ecx,eax
-    movzx eax, byte ptr [esi+1]
-    sub eax,'0'
-    imul ecx,10
-    add ecx,eax           ; ecx = hour12 (1-12)
-
-    movzx eax, byte ptr [esi+3]
-    sub eax,'0'
-    mov ebx,eax
-    movzx eax, byte ptr [esi+4]
-    sub eax,'0'
-    imul ebx,10
-    add ebx,eax            ; ebx = minute
-
-    movzx eax, byte ptr [esi+6]  ; 'A' or 'P'
-    cmp eax,'A'
-    jne gtv_pm
-
-    cmp ecx,12
-    jne gtv_combine
-    mov ecx,0
-    jmp gtv_combine
-
-gtv_pm:
-    cmp ecx,12
-    je gtv_combine
-    add ecx,12
-
-gtv_combine:
-    mov eax,ecx
-    imul eax,60
-    add eax,ebx
-    ret
-GetTimeValue ENDP
-
-; ============================================================
-; IsRecordLess - returns eax=1 if record recA should sort
-; before record recB in the FCFS list (earlier date, then
-; earlier time, then lower Appointment ID), else eax=0.
-; ============================================================
-IsRecordLess PROC recA:DWORD, recB:DWORD
-    LOCAL dateA:DWORD
-    LOCAL dateB:DWORD
-    LOCAL timeA:DWORD
-    LOCAL timeB:DWORD
-
-    invoke GetDateValue, recA
-    mov dateA, eax
-    invoke GetDateValue, recB
-    mov dateB, eax
-
-    mov eax, dateA
-    cmp eax, dateB
-    jl isless_true
-    jg isless_false
-
-    invoke GetTimeValue, recA
-    mov timeA, eax
-    invoke GetTimeValue, recB
-    mov timeB, eax
-
-    mov eax, timeA
-    cmp eax, timeB
-    jl isless_true
-    jg isless_false
-
-    mov eax, recA
-    movzx eax, byte ptr [ids+eax]
-    mov ecx, recB
-    movzx ecx, byte ptr [ids+ecx]
-    cmp eax, ecx
-    jl isless_true
-    jmp isless_false
-
-isless_true:
-    mov eax,1
-    ret
-isless_false:
-    xor eax,eax
-    ret
-IsRecordLess ENDP
-
-; ============================================================
-; SortFCFS - fills sortIndex[0..recCount-1] with the record
-; slots 0..recCount-1 permuted into ascending FCFS order
-; (date, then time, then ID). Simple selection sort - at most
-; MAX_RECORDS (10) entries, so O(n^2) is more than fast enough.
-; ============================================================
-SortFCFS PROC
-    LOCAL i:DWORD
-    LOCAL j:DWORD
-    LOCAL minIdx:DWORD
-    LOCAL idxA:DWORD
-    LOCAL idxB:DWORD
-    LOCAL tmp:DWORD
-
-    mov i,0
-sort_init_loop:
-    mov eax,i
-    cmp eax,recCount
-    jae sort_init_done
-    mov edx,i
-    mov [sortIndex+edx],dl
-    mov eax,i
-    inc eax
-    mov i,eax
-    jmp sort_init_loop
-sort_init_done:
-
-    mov i,0
-outer_loop:
-    mov eax,i
-    mov ebx,recCount
-    dec ebx
-    cmp eax,ebx
-    jge sort_done
-
-    mov eax,i
-    mov minIdx,eax
-
-    mov eax,i
-    inc eax
-    mov j,eax
-inner_loop:
-    mov eax,j
-    cmp eax,recCount
-    jae inner_done
-
-    mov ecx,j
-    movzx eax, byte ptr [sortIndex+ecx]
-    mov idxB, eax
-
-    mov ecx,minIdx
-    movzx eax, byte ptr [sortIndex+ecx]
-    mov idxA, eax
-
-    invoke IsRecordLess, idxB, idxA
-    cmp eax,0
-    je inner_no_update
-    mov eax,j
-    mov minIdx,eax
-inner_no_update:
-
-    mov eax,j
-    inc eax
-    mov j,eax
-    jmp inner_loop
-inner_done:
-
-    mov eax,minIdx
-    cmp eax,i
-    je sort_no_swap
-
-    mov ecx,i
-    movzx eax, byte ptr [sortIndex+ecx]
-    mov tmp,eax
-
-    mov ecx,minIdx
-    movzx eax, byte ptr [sortIndex+ecx]
-    mov edx,i
-    mov [sortIndex+edx],al
-
-    mov ecx,minIdx
-    mov eax,tmp
-    mov [sortIndex+ecx],al
-
-sort_no_swap:
-    mov eax,i
-    inc eax
-    mov i,eax
-    jmp outer_loop
-
-sort_done:
-    ret
-SortFCFS ENDP
-
-; ============================================================
-; DateEditProc - subclass proc for the Appointment Date field.
-; Enforces the fixed "MM/DD/YYYY" mask: only digits may be
-; typed into the M/D/Y slots; the two '/' characters are
-; literal and can never be entered, removed, or shifted.
-; ============================================================
 DateEditProc PROC hWnd:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
     LOCAL selStart:DWORD
     LOCAL pos:DWORD
 
     cmp uMsg, WM_CHAR
-    je date_char
+    je handle_char
     cmp uMsg, WM_KEYDOWN
-    je date_keydown
-
+    je handle_keydown
     invoke CallWindowProcA, oldDateEditProc, hWnd, uMsg, wParam, lParam
     ret
 
-date_char:
+handle_char:
     mov eax, wParam
     cmp eax, 8
-    je date_backspace
-    cmp eax, '0'
-    jb date_char_block
-    cmp eax, '9'
-    ja date_char_block
+    je handle_backspace
 
-    ; Digit typed - find the next available digit slot at/after the caret.
+    cmp eax, '0'
+    jb block_key
+    cmp eax, '9'
+    ja block_key
+
     invoke SendMessageA, hWnd, EM_GETSEL, 0, 0
     and eax, 0FFFFh
     mov selStart, eax
 
     mov eax, selStart
-find_digit_fwd_date:
+find_digit_slot:
     cmp eax, 10
-    jae date_char_block
+    jae block_key
     mov edx, OFFSET dateTemplate
     add edx, eax
     mov cl, [edx]
     cmp cl, '/'
-    jne found_digit_fwd_date
+    jne found_digit_slot
     inc eax
-    jmp find_digit_fwd_date
-found_digit_fwd_date:
+    jmp find_digit_slot
+found_digit_slot:
     mov pos, eax
 
     invoke GetWindowTextA, hWnd, ADDR dateEditBuf, 16
@@ -2567,50 +2303,49 @@ found_digit_fwd_date:
     add edi, eax
     mov eax, wParam
     mov [edi], al
-
     invoke SetWindowTextA, hWnd, ADDR dateEditBuf
 
     mov eax, pos
     inc eax
-skip_lit_fwd_date:
+skip_separator_fwd:
     cmp eax, 10
-    jae set_caret_date
+    jae place_caret
     mov edx, OFFSET dateTemplate
     add edx, eax
     mov cl, [edx]
     cmp cl, '/'
-    jne set_caret_date
+    jne place_caret
     inc eax
-    jmp skip_lit_fwd_date
-set_caret_date:
+    jmp skip_separator_fwd
+place_caret:
     invoke SendMessageA, hWnd, EM_SETSEL, eax, eax
     xor eax, eax
     ret
 
-date_char_block:
+block_key:
     xor eax, eax
     ret
 
-date_backspace:
+handle_backspace:
     invoke SendMessageA, hWnd, EM_GETSEL, 0, 0
     and eax, 0FFFFh
     mov selStart, eax
     cmp selStart, 0
-    je date_char_block
+    je block_key
 
     mov eax, selStart
     dec eax
-skip_lit_back_date:
+skip_separator_back:
     cmp eax, 0
-    jle found_back_date
+    jle found_backspace_slot
     mov edx, OFFSET dateTemplate
     add edx, eax
     mov cl, [edx]
     cmp cl, '/'
-    jne found_back_date
+    jne found_backspace_slot
     dec eax
-    jmp skip_lit_back_date
-found_back_date:
+    jmp skip_separator_back
+found_backspace_slot:
     mov pos, eax
 
     invoke GetWindowTextA, hWnd, ADDR dateEditBuf, 16
@@ -2621,31 +2356,29 @@ found_back_date:
     add edx, pos
     mov cl, [edx]
     mov [edi], cl
-
     invoke SetWindowTextA, hWnd, ADDR dateEditBuf
     invoke SendMessageA, hWnd, EM_SETSEL, pos, pos
     xor eax, eax
     ret
 
-date_keydown:
+handle_keydown:
     mov eax, wParam
     cmp eax, VK_DELETE
-    je date_delete
+    je handle_delete
     invoke CallWindowProcA, oldDateEditProc, hWnd, uMsg, wParam, lParam
     ret
 
-date_delete:
+handle_delete:
     invoke SendMessageA, hWnd, EM_GETSEL, 0, 0
     and eax, 0FFFFh
     mov pos, eax
     cmp pos, 10
-    jae date_char_block
-
+    jae block_key
     mov edx, OFFSET dateTemplate
     add edx, pos
     mov cl, [edx]
     cmp cl, '/'
-    je date_char_block
+    je block_key
 
     invoke GetWindowTextA, hWnd, ADDR dateEditBuf, 16
     mov edi, OFFSET dateEditBuf
@@ -2658,101 +2391,69 @@ date_delete:
     ret
 DateEditProc ENDP
 
-; ============================================================
-; TimeEditProc - subclass proc for the Appointment Time field.
-; Enforces the fixed START/END range mask
-; "00:00 AM - 00:00 AM" (19 chars) - two copies of the original
-; single-time mask ("00:00 AM") joined by a fixed " - " literal:
-;   0,1   = start hour tens/ones digit
-;   2     = ':' (literal)
-;   3,4   = start minute tens/ones digit
-;   5     = ' ' (literal)
-;   6     = start AM/PM letter (typed via the A or P key)
-;   7     = 'M' (literal)
-;   8,9,10= ' ','-',' ' (literal, fixed separator)
-;   11,12 = end hour tens/ones digit
-;   13    = ':' (literal)
-;   14,15 = end minute tens/ones digit
-;   16    = ' ' (literal)
-;   17    = end AM/PM letter (typed via the A or P key)
-;   18    = 'M' (literal)
-; Only digits are accepted at 0,1,3,4,11,12,14,15; only the
-; letters A/P are accepted landing on 6 or 17. Backspace/Delete
-; reset a slot to its placeholder instead of shifting the fixed
-; layout. Digit slots always hold two digits (hour is always
-; shown zero-padded, e.g. 09:00 AM), and the actual 30-minute-
-; interval / start-before-end rules are enforced separately by
-; ValidateTime when the appointment is submitted.
-; ============================================================
+
 TimeEditProc PROC hWnd:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
     LOCAL selStart:DWORD
     LOCAL pos:DWORD
 
     cmp uMsg, WM_CHAR
-    je time_char
+    je handle_char
     cmp uMsg, WM_KEYDOWN
-    je time_keydown
-
+    je handle_keydown
     invoke CallWindowProcA, oldTimeEditProc, hWnd, uMsg, wParam, lParam
     ret
 
-time_char:
+handle_char:
     mov eax, wParam
     cmp eax, 8
-    je time_backspace
-
+    je handle_backspace
     cmp eax, 'a'
-    je time_letter_a
+    je handle_letter_a
     cmp eax, 'A'
-    je time_letter_a
+    je handle_letter_a
     cmp eax, 'p'
-    je time_letter_p
+    je handle_letter_p
     cmp eax, 'P'
-    je time_letter_p
+    je handle_letter_p
 
     cmp eax, '0'
-    jb time_char_block
+    jb block_key
     cmp eax, '9'
-    ja time_char_block
+    ja block_key
 
-    ; Digit typed - only valid landing on the hour/minute slots
-    ; (0,1,3,4 for start; 11,12,14,15 for end). Caret positions
-    ; that fall on the ':' separators are redirected forward to
-    ; the next digit slot.
     invoke SendMessageA, hWnd, EM_GETSEL, 0, 0
     and eax, 0FFFFh
     mov selStart, eax
 
     cmp selStart, 2
-    jne tc_remap13
+    jne skip_remap_13
     mov selStart, 3
-tc_remap13:
+skip_remap_13:
     cmp selStart, 13
-    jne tc_checkvalid
+    jne check_valid_digit_slot
     mov selStart, 14
-tc_checkvalid:
+check_valid_digit_slot:
     cmp selStart, 0
-    je time_digit_place
+    je valid_digit_slot
     cmp selStart, 1
-    je time_digit_place
+    je valid_digit_slot
     cmp selStart, 3
-    je time_digit_place
+    je valid_digit_slot
     cmp selStart, 4
-    je time_digit_place
+    je valid_digit_slot
     cmp selStart, 11
-    je time_digit_place
+    je valid_digit_slot
     cmp selStart, 12
-    je time_digit_place
+    je valid_digit_slot
     cmp selStart, 14
-    je time_digit_place
+    je valid_digit_slot
     cmp selStart, 15
-    je time_digit_place
-    jmp time_char_block
+    je valid_digit_slot
+    jmp block_key
 
-time_digit_place:
+valid_digit_slot:
     mov eax, selStart
     mov pos, eax
-
     invoke GetWindowTextA, hWnd, ADDR timeEditBuf, 24
     mov edi, OFFSET timeEditBuf
     mov eax, pos
@@ -2761,42 +2462,41 @@ time_digit_place:
     mov [edi], al
     invoke SetWindowTextA, hWnd, ADDR timeEditBuf
 
-    ; Advance caret past any fixed literal(s) that follow.
     mov eax, pos
     inc eax
     cmp eax, 2
-    jne tc_adv_chk5
+    jne advance_check_5
     mov eax, 3
-tc_adv_chk5:
+advance_check_5:
     cmp eax, 5
-    jne tc_adv_chk13
+    jne advance_check_13
     mov eax, 6
-tc_adv_chk13:
+advance_check_13:
     cmp eax, 13
-    jne tc_adv_chk16
+    jne advance_check_16
     mov eax, 14
-tc_adv_chk16:
+advance_check_16:
     cmp eax, 16
-    jne tc_adv_setcaret
+    jne place_caret
     mov eax, 17
-tc_adv_setcaret:
+place_caret:
     invoke SendMessageA, hWnd, EM_SETSEL, eax, eax
     xor eax, eax
     ret
 
-time_letter_a:
+handle_letter_a:
     invoke SendMessageA, hWnd, EM_GETSEL, 0, 0
     and eax, 0FFFFh
     cmp eax, 5
-    je ta_start_ok
+    je set_start_ampm
     cmp eax, 6
-    je ta_start_ok
+    je set_start_ampm
     cmp eax, 16
-    je ta_end_ok
+    je set_end_ampm
     cmp eax, 17
-    je ta_end_ok
-    jmp time_char_block
-ta_start_ok:
+    je set_end_ampm
+    jmp block_key
+set_start_ampm:
     invoke GetWindowTextA, hWnd, ADDR timeEditBuf, 24
     mov edi, OFFSET timeEditBuf
     add edi, 6
@@ -2805,7 +2505,7 @@ ta_start_ok:
     invoke SendMessageA, hWnd, EM_SETSEL, 11, 11
     xor eax, eax
     ret
-ta_end_ok:
+set_end_ampm:
     invoke GetWindowTextA, hWnd, ADDR timeEditBuf, 24
     mov edi, OFFSET timeEditBuf
     add edi, 17
@@ -2815,19 +2515,19 @@ ta_end_ok:
     xor eax, eax
     ret
 
-time_letter_p:
+handle_letter_p:
     invoke SendMessageA, hWnd, EM_GETSEL, 0, 0
     and eax, 0FFFFh
     cmp eax, 5
-    je tp_start_ok
+    je set_start_pm
     cmp eax, 6
-    je tp_start_ok
+    je set_start_pm
     cmp eax, 16
-    je tp_end_ok
+    je set_end_pm
     cmp eax, 17
-    je tp_end_ok
-    jmp time_char_block
-tp_start_ok:
+    je set_end_pm
+    jmp block_key
+set_start_pm:
     invoke GetWindowTextA, hWnd, ADDR timeEditBuf, 24
     mov edi, OFFSET timeEditBuf
     add edi, 6
@@ -2836,7 +2536,7 @@ tp_start_ok:
     invoke SendMessageA, hWnd, EM_SETSEL, 11, 11
     xor eax, eax
     ret
-tp_end_ok:
+set_end_pm:
     invoke GetWindowTextA, hWnd, ADDR timeEditBuf, 24
     mov edi, OFFSET timeEditBuf
     add edi, 17
@@ -2846,101 +2546,97 @@ tp_end_ok:
     xor eax, eax
     ret
 
-time_char_block:
+block_key:
     xor eax, eax
     ret
 
-time_backspace:
+handle_backspace:
     invoke SendMessageA, hWnd, EM_GETSEL, 0, 0
     and eax, 0FFFFh
     mov selStart, eax
     cmp selStart, 0
-    je time_char_block
+    je block_key
 
-    ; Map (selStart-1) back to the nearest editable slot at or
-    ; before it, skipping over any run of fixed literals.
     mov eax, selStart
     dec eax
     cmp eax, 18
-    jne tb_chk16
+    jne back_check_16
     mov eax, 17
-tb_chk16:
+back_check_16:
     cmp eax, 16
-    jne tb_chk13
+    jne back_check_13
     mov eax, 15
-tb_chk13:
+back_check_13:
     cmp eax, 13
-    jne tb_chk10
+    jne back_check_10
     mov eax, 12
-tb_chk10:
+back_check_10:
     cmp eax, 10
-    jne tb_chk5
+    jne back_check_5
     mov eax, 6
-tb_chk5:
+back_check_5:
     cmp eax, 5
-    jne tb_chk2
+    jne back_check_2
     mov eax, 4
-tb_chk2:
+back_check_2:
     cmp eax, 2
-    jne tb_ready
+    jne back_ready
     mov eax, 1
-tb_ready:
+back_ready:
     mov pos, eax
 
     invoke GetWindowTextA, hWnd, ADDR timeEditBuf, 24
     mov edi, OFFSET timeEditBuf
     mov eax, pos
     add edi, eax
-
     cmp pos, 6
-    je tb_letter
+    je clear_ampm_letter
     cmp pos, 17
-    je tb_letter
+    je clear_ampm_letter
     mov byte ptr [edi], '0'
-    jmp tb_write
-tb_letter:
+    jmp write_backspace
+clear_ampm_letter:
     mov byte ptr [edi], 'A'
-tb_write:
+write_backspace:
     invoke SetWindowTextA, hWnd, ADDR timeEditBuf
     invoke SendMessageA, hWnd, EM_SETSEL, pos, pos
     xor eax, eax
     ret
 
-time_keydown:
+handle_keydown:
     mov eax, wParam
     cmp eax, VK_DELETE
-    je time_delete
+    je handle_delete
     invoke CallWindowProcA, oldTimeEditProc, hWnd, uMsg, wParam, lParam
     ret
 
-time_delete:
+handle_delete:
     invoke SendMessageA, hWnd, EM_GETSEL, 0, 0
     and eax, 0FFFFh
     mov pos, eax
-
     cmp pos, 0
-    je td_digit
+    je delete_digit
     cmp pos, 1
-    je td_digit
+    je delete_digit
     cmp pos, 3
-    je td_digit
+    je delete_digit
     cmp pos, 4
-    je td_digit
+    je delete_digit
     cmp pos, 11
-    je td_digit
+    je delete_digit
     cmp pos, 12
-    je td_digit
+    je delete_digit
     cmp pos, 14
-    je td_digit
+    je delete_digit
     cmp pos, 15
-    je td_digit
+    je delete_digit
     cmp pos, 6
-    je td_letter
+    je delete_letter
     cmp pos, 17
-    je td_letter
-    jmp time_char_block
+    je delete_letter
+    jmp block_key
 
-td_digit:
+delete_digit:
     invoke GetWindowTextA, hWnd, ADDR timeEditBuf, 24
     mov edi, OFFSET timeEditBuf
     mov eax, pos
@@ -2951,7 +2647,7 @@ td_digit:
     xor eax, eax
     ret
 
-td_letter:
+delete_letter:
     invoke GetWindowTextA, hWnd, ADDR timeEditBuf, 24
     mov edi, OFFSET timeEditBuf
     mov eax, pos
